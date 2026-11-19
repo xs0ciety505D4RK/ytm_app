@@ -17,6 +17,7 @@ Future<void> main() async {
     systemNavigationBarColor: Colors.transparent,
   ));
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  await Perf.load();
   await PlayerService.i.init(); // foreground service + notifikasi media
   runApp(const App());
   Permission.notification.request(); // Android 13+: izin notifikasi pemutar
@@ -44,14 +45,10 @@ class App extends StatelessWidget {
           overlayShape: RoundSliderOverlayShape(overlayRadius: 0),
         ),
       ),
-      builder: (context, child) => AnimatedBuilder(
-        animation: PlayerService.i,
-        builder: (context, _) => Stack(children: [
-          Positioned.fill(
-              child: GlassBackground(art: PlayerService.i.current?.thumb)),
-          child!,
-        ]),
-      ),
+      builder: (context, child) => Stack(children: [
+        const Positioned.fill(child: GlassBackground()),
+        child!,
+      ]),
       home: const Shell(),
     );
   }
@@ -105,7 +102,8 @@ class _ShellState extends State<Shell> {
                 Column(mainAxisSize: MainAxisSize.min, children: [
               if (p.current != null) const MiniPlayer(),
               if (p.current != null) const SizedBox(height: 10),
-              BubbleNav(controller: _pc, items: _items),
+              RepaintBoundary(
+                  child: BubbleNav(controller: _pc, items: _items)),
             ]),
           ),
         ),
