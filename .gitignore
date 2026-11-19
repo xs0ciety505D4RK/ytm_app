@@ -1,0 +1,9 @@
+.dart_tool/
+build/
+android/
+ios/
+.flutter-plugins*
+.packages
+pubspec.lock
+node_modules/
+.vercel/
