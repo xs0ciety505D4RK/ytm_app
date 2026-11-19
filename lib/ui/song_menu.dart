@@ -89,20 +89,43 @@ Future<void> showSongMenu(BuildContext context, Song s,
           Navigator.pop(ctx);
           openBrowse(context, id: s.albumId!);
         }),
-      _row(
-          p.isDownloaded(s)
-              ? Icons.download_done_rounded
-              : Icons.download_rounded,
-          p.isDownloaded(s) ? 'Hapus unduhan' : 'Unduh untuk offline', () {
-        Navigator.pop(ctx);
-        if (p.isDownloaded(s)) {
-          p.deleteDownload(s);
-          _toast(context, 'Unduhan dihapus');
-        } else {
-          p.download(s);
-          _toast(context, 'Mulai mengunduh…');
-        }
-      }),
+      // Tombol unduh: 3 state — belum unduh / sedang unduh / sudah unduh
+      AnimatedBuilder(
+        animation: p,
+        builder: (_, __) {
+          final isDownloading = p.progress.containsKey(s.id);
+          final isDownloaded = p.isDownloaded(s);
+          final pct = isDownloading
+              ? ' (${(p.progress[s.id]! * 100).round()}%)'
+              : '';
+          return _row(
+            isDownloaded
+                ? Icons.download_done_rounded
+                : isDownloading
+                    ? Icons.downloading_rounded
+                    : Icons.download_rounded,
+            isDownloaded
+                ? 'Hapus unduhan'
+                : isDownloading
+                    ? 'Batalkan unduhan$pct'
+                    : 'Unduh untuk offline',
+            () {
+              if (isDownloaded) {
+                Navigator.pop(ctx);
+                p.deleteDownload(s);
+                _toast(context, 'Unduhan dihapus');
+              } else if (isDownloading) {
+                p.cancelDownload(s.id);
+                _toast(context, 'Unduhan dibatalkan');
+              } else {
+                Navigator.pop(ctx);
+                p.download(s);
+                _toast(context, 'Mulai mengunduh…');
+              }
+            },
+          );
+        },
+      ),
       _row(Icons.playlist_add_rounded, 'Tambah ke playlist', () {
         Navigator.pop(ctx);
         showPlaylistPicker(context, s);

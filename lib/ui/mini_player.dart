@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 import '../screens/now_playing.dart';
 import '../services/player_service.dart';
 import 'glass.dart';
@@ -11,8 +12,8 @@ class MiniPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = PlayerService.i;
-    return AnimatedBuilder(
-      animation: p,
+    return ListenableBuilder(
+      listenable: p,
       builder: (context, _) {
         final s = p.current;
         if (s == null) return const SizedBox.shrink();
@@ -48,20 +49,34 @@ class MiniPlayer extends StatelessWidget {
                   ],
                 ),
               ),
-              p.loading
-                  ? const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5)))
-                  : IconButton(
-                      onPressed: p.toggle,
-                      icon: Icon(
-                          p.playing
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          size: 30)),
+              // Gunakan StreamBuilder agar spinner HANYA tampil saat loading
+              // benar-benar dibutuhkan, dan berhenti begitu buffering selesai.
+              StreamBuilder<PlayerState>(
+                stream: p.player.playerStateStream,
+                builder: (context, snap) {
+                  final state = snap.data;
+                  // Spinner hanya saat p.loading (stream fetch) ATAU
+                  // saat buffering awal (loading), bukan saat normal buffering
+                  // yang terjadi terus-menerus pada stream YouTube.
+                  final busy = p.loading ||
+                      (state?.processingState == ProcessingState.loading);
+                  return busy
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                              width: 22,
+                              height: 22,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2.5)))
+                      : IconButton(
+                          onPressed: p.toggle,
+                          icon: Icon(
+                              p.playing
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              size: 30));
+                },
+              ),
               IconButton(
                   onPressed: p.next,
                   icon: const Icon(Icons.skip_next_rounded)),

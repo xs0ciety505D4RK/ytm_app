@@ -51,11 +51,15 @@ class SongTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = PlayerService.i;
-    return AnimatedBuilder(
-      animation: p,
+    // Hanya rebuild jika lagu ini yang aktif/liked/progress berubah —
+    // bukan rebuild semua tile setiap kali player notifyListeners().
+    return ListenableBuilder(
+      listenable: p,
       builder: (context, _) {
         final active = p.current?.id == song.id;
         final liked = p.isLiked(song);
+        final downloading = p.progress.containsKey(song.id);
+        final dl = p.isDownloaded(song);
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
           child: GestureDetector(
@@ -77,11 +81,15 @@ class SongTile extends StatelessWidget {
                       Text(song.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 15, fontWeight: FontWeight.w600)),
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: active
+                                  ? const Color(0xFF8FB8FF)
+                                  : Colors.white)),
                       const SizedBox(height: 2),
                       Row(children: [
-                        if (p.isDownloaded(song))
+                        if (dl)
                           const Padding(
                             padding: EdgeInsets.only(right: 4),
                             child: Icon(Icons.download_done_rounded,
@@ -89,7 +97,7 @@ class SongTile extends StatelessWidget {
                           ),
                         Expanded(
                           child: Text(
-                              p.progress.containsKey(song.id)
+                              downloading
                                   ? 'Mengunduh ${(p.progress[song.id]! * 100).round()}%'
                                   : song.duration.isEmpty
                                       ? song.artist
@@ -106,7 +114,8 @@ class SongTile extends StatelessWidget {
                 IconButton(
                   onPressed: () => p.toggleLike(song),
                   icon: Icon(liked ? Icons.favorite : Icons.favorite_border,
-                      color: liked ? const Color(0xFFFF5C8A) : Colors.white54),
+                      color:
+                          liked ? const Color(0xFFFF5C8A) : Colors.white54),
                 ),
                 IconButton(
                   onPressed: () => showSongMenu(context, song,
@@ -123,4 +132,4 @@ class SongTile extends StatelessWidget {
   }
 }
 
-const double kBottomSpace = 200; // ruang untuk navbar + mini player
+const double kBottomSpace = 200;
