@@ -8,12 +8,12 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart'
-    show YoutubeExplode, YoutubeApiClient;
+    show YoutubeExplode, YoutubeApiClient, AudioOnlyStreamInfo;
 import '../api/ytmusic_api.dart';
 import '../models/song.dart';
 import 'music_handler.dart';
 
-enum RepeatMode { off, all, one }
+enum RepeatKind { off, all, one }
 
 class PlayerService extends ChangeNotifier {
   PlayerService._();
@@ -33,7 +33,7 @@ class PlayerService extends ChangeNotifier {
   int index = -1;
   final List<int> _stack = [];
   bool shuffle = false;
-  RepeatMode repeat = RepeatMode.off;
+  RepeatKind repeat = RepeatKind.off;
   bool loading = false;
   String? error;
   int _req = 0;
@@ -86,6 +86,9 @@ class PlayerService extends ChangeNotifier {
     await _load();
   }
 
+  AudioOnlyStreamInfo _best(Iterable<AudioOnlyStreamInfo> l) => l.reduce(
+      (a, b) => a.bitrate.bitsPerSecond >= b.bitrate.bitsPerSecond ? a : b);
+
   MediaItem _item(Song s, [Duration? d]) => MediaItem(
         id: s.id,
         title: s.title,
@@ -122,7 +125,7 @@ class PlayerService extends ChangeNotifier {
           ytClients: [YoutubeApiClient.androidVr, YoutubeApiClient.tv],
         );
         if (req != _req) return;
-        final audio = manifest.audioOnly.withHighestBitrate();
+        final audio = _best(manifest.audioOnly);
         await _player.setAudioSource(AudioSource.uri(audio.url));
       }
       if (req != _req) return;
@@ -150,7 +153,7 @@ class PlayerService extends ChangeNotifier {
 
   Future<void> next({bool auto = false}) async {
     if (queue.isEmpty) return;
-    if (auto && repeat == RepeatMode.one) {
+    if (auto && repeat == RepeatKind.one) {
       await _player.seek(Duration.zero);
       _player.play();
       return;
@@ -164,7 +167,7 @@ class PlayerService extends ChangeNotifier {
       n = index + 1;
     }
     if (n >= queue.length) {
-      if (repeat == RepeatMode.all) {
+      if (repeat == RepeatKind.all) {
         n = 0;
       } else {
         // autoplay: sambung dengan radio dari lagu terakhir
@@ -208,7 +211,7 @@ class PlayerService extends ChangeNotifier {
   }
 
   void cycleRepeat() {
-    repeat = RepeatMode.values[(repeat.index + 1) % 3];
+    repeat = RepeatKind.values[(repeat.index + 1) % 3];
     notifyListeners();
   }
 
@@ -297,7 +300,7 @@ class PlayerService extends ChangeNotifier {
         s.id,
         ytClients: [YoutubeApiClient.androidVr, YoutubeApiClient.tv],
       );
-      final a = m.audioOnly.withHighestBitrate();
+      final a = _best(m.audioOnly);
       final dir = await getApplicationDocumentsDirectory();
       final f = File('${dir.path}/dl_${s.id}.${a.container.name}');
       final sink = f.openWrite();
