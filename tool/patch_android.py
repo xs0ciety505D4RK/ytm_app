@@ -33,6 +33,7 @@ svc = '''        <service android:name="com.ryanheise.audioservice.AudioService"
 '''
 s = s.replace('</application>', svc + '    </application>', 1)
 s = s.replace('android:label="ytm_glass"', 'android:label="YTM Glass"')
+s = s.replace('<application', '<application android:usesCleartextTraffic="true"', 1)
 m.write_text(s)
 
 for f in glob.glob('android/app/src/main/kotlin/**/MainActivity.kt', recursive=True):
