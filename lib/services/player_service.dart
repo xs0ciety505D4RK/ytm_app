@@ -9,9 +9,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart'
     show YoutubeExplode, YoutubeApiClient, AudioOnlyStreamInfo;
+import '../api/lyrics_api.dart';
 import '../api/ytmusic_api.dart';
 import '../models/song.dart';
 import 'music_handler.dart';
+import 'yt_stream_source.dart';
 
 enum RepeatKind { off, all, one }
 
@@ -27,6 +29,9 @@ class PlayerService extends ChangeNotifier {
   final YoutubeExplode _yt = YoutubeExplode();
   final Random _rnd = Random();
   late final MusicHandler _handler;
+
+  /// URL cover lagu aktif (latar belakang hanya mendengarkan ini).
+  final ValueNotifier<String?> art = ValueNotifier(null);
 
   // antrean
   List<Song> queue = [];
@@ -86,9 +91,6 @@ class PlayerService extends ChangeNotifier {
     await _load();
   }
 
-  AudioOnlyStreamInfo _best(Iterable<AudioOnlyStreamInfo> l) => l.reduce(
-      (a, b) => a.bitrate.bitsPerSecond >= b.bitrate.bitsPerSecond ? a : b);
-
   MediaItem _item(Song s, [Duration? d]) => MediaItem(
         id: s.id,
         title: s.title,
@@ -96,6 +98,39 @@ class PlayerService extends ChangeNotifier {
         artUri: s.thumb.isEmpty ? null : Uri.parse(s.thumb),
         duration: d,
       );
+
+  // ---------- stream YouTube ----------
+
+  /// Coba beberapa klien sampai ada yang mengembalikan stream audio.
+  Future<List<AudioOnlyStreamInfo>> _streams(String id) async {
+    Object? last;
+    final attempts = <List<YoutubeApiClient>?>[
+      null,
+      [YoutubeApiClient.androidVr],
+      [YoutubeApiClient.tv],
+    ];
+    for (final clients in attempts) {
+      try {
+        final m = clients == null
+            ? await _yt.videos.streamsClient.getManifest(id)
+            : await _yt.videos.streamsClient.getManifest(id, ytClients: clients);
+        final l = m.audioOnly.toList();
+        if (l.isNotEmpty) {
+          l.sort((a, b) =>
+              b.bitrate.bitsPerSecond.compareTo(a.bitrate.bitsPerSecond));
+          return l;
+        }
+      } catch (e) {
+        last = e;
+      }
+    }
+    throw last ?? Exception('Tidak ada stream audio');
+  }
+
+  String _short(Object e) {
+    final t = e.toString().replaceAll('\n', ' ');
+    return t.length > 90 ? '${t.substring(0, 90)}…' : t;
+  }
 
   // ---------- pemutaran ----------
 
@@ -112,6 +147,7 @@ class PlayerService extends ChangeNotifier {
     final song = queue[i];
     loading = true;
     error = null;
+    art.value = song.thumb;
     _handler.mediaItem.add(_item(song));
     _pushHistory(song);
     notifyListeners();
@@ -120,18 +156,20 @@ class PlayerService extends ChangeNotifier {
       if (local != null && File(local).existsSync()) {
         await _player.setAudioSource(AudioSource.uri(Uri.file(local)));
       } else {
-        final manifest = await _yt.videos.streamsClient.getManifest(
-          song.id,
-          ytClients: [YoutubeApiClient.androidVr, YoutubeApiClient.tv],
-        );
+        final list = await _streams(song.id);
         if (req != _req) return;
-        final audio = _best(manifest.audioOnly);
-        await _player.setAudioSource(AudioSource.uri(audio.url));
+        final info = list.first;
+        try {
+          await _player.setAudioSource(AudioSource.uri(info.url));
+        } catch (_) {
+          if (req != _req) return;
+          await _player.setAudioSource(YtStreamSource(_yt, info));
+        }
       }
       if (req != _req) return;
       _player.play();
     } catch (e) {
-      if (req == _req) error = 'Gagal memutar lagu ini.';
+      if (req == _req) error = 'Gagal memutar: ${_short(e)}';
     }
     if (req == _req) loading = false;
     notifyListeners();
@@ -143,6 +181,10 @@ class PlayerService extends ChangeNotifier {
   }
 
   Future<void> toggle() async {
+    if (error != null && current != null) {
+      await _playIndex(index); // coba lagi
+      return;
+    }
     if (_player.playing) {
       await _player.pause();
     } else {
@@ -291,16 +333,14 @@ class PlayerService extends ChangeNotifier {
 
   bool isDownloaded(Song s) => downloadPaths.containsKey(s.id);
 
+  /// Unduh audio + lirik (dan terjemahannya) supaya bisa dipakai tanpa internet.
   Future<void> download(Song s) async {
     if (isDownloaded(s) || progress.containsKey(s.id)) return;
     progress[s.id] = 0;
     notifyListeners();
     try {
-      final m = await _yt.videos.streamsClient.getManifest(
-        s.id,
-        ytClients: [YoutubeApiClient.androidVr, YoutubeApiClient.tv],
-      );
-      final a = _best(m.audioOnly);
+      final list = await _streams(s.id);
+      final a = list.first;
       final dir = await getApplicationDocumentsDirectory();
       final f = File('${dir.path}/dl_${s.id}.${a.container.name}');
       final sink = f.openWrite();
@@ -311,7 +351,7 @@ class PlayerService extends ChangeNotifier {
         sink.add(chunk);
         got += chunk.length;
         final pr = total > 0 ? got / total : 0.0;
-        if (pr - lastShown > 0.02) {
+        if (pr - lastShown > 0.05) {
           lastShown = pr;
           progress[s.id] = pr;
           notifyListeners();
@@ -321,6 +361,8 @@ class PlayerService extends ChangeNotifier {
       downloadPaths[s.id] = f.path;
       downloaded.insert(0, s);
       await _save();
+      // lirik ikut tersimpan (gagal pun tidak masalah)
+      unawaited(LyricsApi.prefetch(s));
     } catch (_) {}
     progress.remove(s.id);
     notifyListeners();
@@ -353,7 +395,8 @@ class PlayerService extends ChangeNotifier {
     final p = await SharedPreferences.getInstance();
     await p.setStringList('likes', likes.map((e) => e.encode()).toList());
     await p.setStringList('history', history.map((e) => e.encode()).toList());
-    await p.setStringList('downloads', downloaded.map((e) => e.encode()).toList());
+    await p.setStringList(
+        'downloads', downloaded.map((e) => e.encode()).toList());
     await p.setString('dl_paths', jsonEncode(downloadPaths));
     await p.setString(
         'playlists',
@@ -365,7 +408,8 @@ class PlayerService extends ChangeNotifier {
     final p = await SharedPreferences.getInstance();
     likes = (p.getStringList('likes') ?? []).map(Song.decode).toList();
     history = (p.getStringList('history') ?? []).map(Song.decode).toList();
-    downloaded = (p.getStringList('downloads') ?? []).map(Song.decode).toList();
+    downloaded =
+        (p.getStringList('downloads') ?? []).map(Song.decode).toList();
     final dl = p.getString('dl_paths');
     if (dl != null) {
       downloadPaths = Map<String, String>.from(jsonDecode(dl));
@@ -373,8 +417,8 @@ class PlayerService extends ChangeNotifier {
     final raw = p.getString('playlists');
     if (raw != null) {
       final m = jsonDecode(raw) as Map<String, dynamic>;
-      playlists = m.map((k, v) => MapEntry(
-          k, (v as List).map((e) => Song.fromJson(e)).toList()));
+      playlists = m.map((k, v) =>
+          MapEntry(k, (v as List).map((e) => Song.fromJson(e)).toList()));
     }
     notifyListeners();
   }
