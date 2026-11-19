@@ -3,6 +3,7 @@ import '../api/ytmusic_api.dart';
 import '../models/song.dart';
 import '../services/player_service.dart';
 import '../ui/glass.dart';
+import '../ui/settings_sheet.dart';
 import '../ui/song_menu.dart';
 import '../ui/widgets.dart';
 
@@ -37,13 +38,17 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   Widget _header() => Column(children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 16, 20, 12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text('Koleksi',
-                style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800)),
-          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 8, 12),
+          child: Row(children: [
+            const Expanded(
+              child: Text('Koleksi',
+                  style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800)),
+            ),
+            IconButton(
+                onPressed: () => showSettings(context),
+                icon: const Icon(Icons.tune_rounded)),
+          ]),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -55,7 +60,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                   onTap: () => setState(() => _tab = i),
                   child: Glass(
                     radius: 20,
-                    blur: 16,
+                    blur: 0,
                     strength: _tab == i ? 2.2 : 0.8,
                     padding:
                         const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
@@ -147,7 +152,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                 },
                 child: const Glass(
                   radius: 22,
-                  blur: 20,
+                  blur: 0,
                   padding: EdgeInsets.all(14),
                   child: Row(children: [
                     Icon(Icons.add_rounded),
@@ -165,7 +170,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                 onTap: _importPlaylist,
                 child: const Glass(
                   radius: 22,
-                  blur: 20,
+                  blur: 0,
                   padding: EdgeInsets.all(14),
                   child: Row(children: [
                     Icon(Icons.link_rounded),
@@ -185,7 +190,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                   onTap: () => setState(() => _open = n),
                   child: Glass(
                     radius: 22,
-                    blur: 20,
+                    blur: 0,
                     padding: const EdgeInsets.all(8),
                     child: Row(children: [
                       Art(p.playlists[n]!.isEmpty ? '' : p.playlists[n]!.first.thumb,

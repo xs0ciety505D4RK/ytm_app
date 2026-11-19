@@ -84,7 +84,7 @@ class _ExploreScreenState extends State<ExploreScreen>
                           id: t.browseId, params: t.params, title: t.title),
                       child: Glass(
                         radius: 20,
-                        blur: 18,
+                        blur: 0,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 12),
                         child: Row(mainAxisSize: MainAxisSize.min, children: [

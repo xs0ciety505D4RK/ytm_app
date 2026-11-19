@@ -42,7 +42,7 @@ class _NowPlayingState extends State<NowPlaying> {
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         child: Glass(
           radius: 32,
-          blur: 40,
+          blur: 24,
           strength: 1.5,
           child: SafeArea(
             top: false,
@@ -84,7 +84,7 @@ class _NowPlayingState extends State<NowPlaying> {
       height: MediaQuery.of(context).size.height * 0.93,
       child: Glass(
         radius: 40,
-        blur: 40,
+        blur: 24,
         strength: 1.2,
         child: AnimatedBuilder(
           animation: p,
@@ -286,10 +286,23 @@ class LyricsView extends StatefulWidget {
 }
 
 class _LyricsViewState extends State<LyricsView> {
-  late final Future<Lyrics?> _f = LyricsApi.fetch(widget.song);
+  Lyrics? _l;
+  bool _loading = true;
+  bool _tr = false;
+  bool _trLoading = false;
+  bool _trFailed = false;
+  List<String>? _trLines;
+  String _lang = 'id';
   final _sc = ScrollController();
   int _last = -1;
-  static const double _h = 52;
+
+  double get _h => (_tr && _trLines != null) ? 104 : 52;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
 
   @override
   void dispose() {
@@ -297,72 +310,200 @@ class _LyricsViewState extends State<LyricsView> {
     super.dispose();
   }
 
+  Future<void> _init() async {
+    _lang = await LyricsApi.getLang();
+    final l = await LyricsApi.fetch(widget.song);
+    if (!mounted) return;
+    setState(() {
+      _l = l;
+      _loading = false;
+    });
+  }
+
+  Future<void> _translate() async {
+    final l = _l;
+    if (l == null) return;
+    setState(() {
+      _trLoading = true;
+      _trFailed = false;
+      _trLines = null;
+    });
+    final t = await LyricsApi.translate(widget.song, l, _lang);
+    if (!mounted) return;
+    setState(() {
+      _trLines = t;
+      _trLoading = false;
+      _trFailed = t == null;
+    });
+  }
+
+  void _toggleTr() {
+    setState(() => _tr = !_tr);
+    if (_tr && _trLines == null) _translate();
+  }
+
+  Future<void> _setLang(String code) async {
+    _lang = code;
+    await LyricsApi.setLang(code);
+    setState(() => _trLines = null);
+    if (_tr) _translate();
+  }
+
+  Widget _chip(IconData icon, String label, bool active) => Glass(
+        radius: 18,
+        strength: active ? 2.2 : 0.9,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 16, color: active ? Colors.white : Colors.white70),
+          const SizedBox(width: 6),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: active ? Colors.white : Colors.white70)),
+        ]),
+      );
+
+  Widget _controls() => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(children: [
+          GestureDetector(
+              onTap: _toggleTr,
+              child: _chip(Icons.translate_rounded, 'Terjemah', _tr)),
+          if (_tr) ...[
+            const SizedBox(width: 8),
+            PopupMenuButton<String>(
+              onSelected: _setLang,
+              color: const Color(0xFF1A2030),
+              itemBuilder: (_) => [
+                for (final e in LyricsApi.languages.entries)
+                  PopupMenuItem(value: e.key, child: Text(e.value)),
+              ],
+              child: _chip(Icons.language_rounded,
+                  LyricsApi.languages[_lang] ?? _lang, false),
+            ),
+          ],
+          const SizedBox(width: 10),
+          if (_trLoading)
+            const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2)),
+          if (_trFailed && !_trLoading)
+            const Flexible(
+              child: Text('Gagal menerjemahkan (butuh internet)',
+                  style: TextStyle(fontSize: 12, color: Color(0xFFFF8A8A))),
+            ),
+        ]),
+      );
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Lyrics?>(
-      future: _f,
-      builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final l = snap.data;
-        if (l == null) {
-          return const Center(
-              child: Text('Lirik tidak ditemukan',
-                  style: TextStyle(color: Colors.white60)));
-        }
-        if (!l.synced) {
-          return SingleChildScrollView(
-            child: Text(l.plain,
-                style: const TextStyle(fontSize: 17, height: 1.6)),
-          );
-        }
-        return LayoutBuilder(builder: (context, c) {
-          return StreamBuilder<Duration>(
-            stream: PlayerService.i.player.positionStream,
-            builder: (context, ps) {
-              final pos = ps.data ?? Duration.zero;
-              int cur = -1;
-              for (int i = 0; i < l.lines.length; i++) {
-                if (l.lines[i].t <= pos) cur = i;
-              }
-              if (cur != _last && cur >= 0) {
-                _last = cur;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!_sc.hasClients) return;
-                  _sc.animateTo(
-                    (cur * _h - c.maxHeight / 2 + _h / 2)
-                        .clamp(0, _sc.position.maxScrollExtent),
-                    duration: const Duration(milliseconds: 400),
-                    curve: Curves.easeOutCubic,
-                  );
-                });
-              }
-              return ListView.builder(
-                controller: _sc,
-                itemExtent: _h,
-                itemCount: l.lines.length,
-                itemBuilder: (context, i) => GestureDetector(
-                  onTap: () => PlayerService.i.player.seek(l.lines[i].t),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: AnimatedDefaultTextStyle(
-                      duration: const Duration(milliseconds: 250),
-                      style: TextStyle(
-                        fontSize: i == cur ? 22 : 18,
-                        fontWeight: FontWeight.w800,
-                        color: i == cur ? Colors.white : Colors.white38,
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    final l = _l;
+    if (l == null) {
+      return const Center(
+          child: Text('Lirik tidak ditemukan',
+              style: TextStyle(color: Colors.white60)));
+    }
+    return Column(children: [
+      _controls(),
+      Expanded(child: l.synced ? _synced(l) : _plain(l)),
+    ]);
+  }
+
+  String? _trAt(int i) {
+    if (!_tr || _trLines == null || i >= _trLines!.length) return null;
+    final t = _trLines![i];
+    return t.isEmpty ? null : t;
+  }
+
+  Widget _plain(Lyrics l) {
+    final lines = l.texts;
+    return ListView.builder(
+      itemCount: lines.length,
+      itemBuilder: (context, i) {
+        final t = _trAt(i);
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(lines[i], style: const TextStyle(fontSize: 17, height: 1.4)),
+            if (t != null)
+              Text(t,
+                  style: const TextStyle(
+                      fontSize: 14, height: 1.3, color: Colors.white60)),
+          ]),
+        );
+      },
+    );
+  }
+
+  Widget _synced(Lyrics l) {
+    return LayoutBuilder(builder: (context, c) {
+      return StreamBuilder<Duration>(
+        stream: PlayerService.i.player.positionStream,
+        builder: (context, ps) {
+          final pos = ps.data ?? Duration.zero;
+          int cur = -1;
+          for (int i = 0; i < l.lines.length; i++) {
+            if (l.lines[i].t <= pos) cur = i;
+          }
+          if (cur != _last && cur >= 0) {
+            _last = cur;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!_sc.hasClients) return;
+              _sc.animateTo(
+                (cur * _h - c.maxHeight / 2 + _h / 2)
+                    .clamp(0, _sc.position.maxScrollExtent),
+                duration: const Duration(milliseconds: 400),
+                curve: Curves.easeOutCubic,
+              );
+            });
+          }
+          return ListView.builder(
+            controller: _sc,
+            itemExtent: _h,
+            itemCount: l.lines.length,
+            itemBuilder: (context, i) {
+              final t = _trAt(i);
+              final active = i == cur;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => PlayerService.i.player.seek(l.lines[i].t),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 250),
+                        style: TextStyle(
+                          fontSize: active ? 21 : 18,
+                          fontWeight: FontWeight.w800,
+                          color: active ? Colors.white : Colors.white38,
+                        ),
+                        child: Text(
+                            l.lines[i].text.isEmpty ? '•' : l.lines[i].text,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis),
                       ),
-                      child: Text(l.lines[i].text.isEmpty ? '•' : l.lines[i].text,
-                          maxLines: 2, overflow: TextOverflow.ellipsis),
-                    ),
+                      if (t != null)
+                        Text(t,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 14,
+                                color:
+                                    active ? Colors.white70 : Colors.white30)),
+                    ],
                   ),
                 ),
               );
             },
           );
-        });
-      },
-    );
+        },
+      );
+    });
   }
 }

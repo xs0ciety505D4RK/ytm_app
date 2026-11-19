@@ -29,7 +29,7 @@ class _QueueSheet extends StatelessWidget {
         height: MediaQuery.of(context).size.height * 0.7,
         child: Glass(
           radius: 32,
-          blur: 40,
+          blur: 24,
           strength: 1.5,
           child: AnimatedBuilder(
             animation: p,

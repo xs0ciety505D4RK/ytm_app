@@ -22,7 +22,7 @@ class _EqSheet extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Glass(
         radius: 32,
-        blur: 40,
+        blur: 24,
         strength: 1.5,
         child: SafeArea(
           top: false,

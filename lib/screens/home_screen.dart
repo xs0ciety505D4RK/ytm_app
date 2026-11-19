@@ -35,16 +35,34 @@ class _HomeScreenState extends State<HomeScreen>
               return const Center(child: CircularProgressIndicator());
             }
             if (snap.hasError || snap.data == null || snap.data!.isEmpty) {
-              return ListView(children: [
-                const SizedBox(height: 200),
-                Center(
-                  child: Text(
-                      'Gagal memuat beranda.\nTarik ke bawah untuk coba lagi.',
-                      textAlign: TextAlign.center,
-                      style:
-                          TextStyle(color: Colors.white.withValues(alpha: .7))),
-                ),
-              ]);
+              final p = PlayerService.i;
+              final offline = [
+                if (p.downloaded.isNotEmpty)
+                  Section('Unduhan (offline)',
+                      p.downloaded.map(Entry.fromSong).toList()),
+                if (p.history.isNotEmpty)
+                  Section('Terakhir diputar',
+                      p.history.take(15).map(Entry.fromSong).toList()),
+              ];
+              return ListView(
+                padding: const EdgeInsets.only(bottom: kBottomSpace),
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+                    child: Text('Beranda',
+                        style: TextStyle(
+                            fontSize: 34, fontWeight: FontWeight.w800)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                    child: Text(
+                        'Tidak ada koneksi. Lagu unduhan tetap bisa diputar.\nTarik ke bawah untuk coba lagi.',
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: .7))),
+                  ),
+                  for (final sec in offline) SectionRow(section: sec),
+                ],
+              );
             }
             return AnimatedBuilder(
               animation: PlayerService.i,

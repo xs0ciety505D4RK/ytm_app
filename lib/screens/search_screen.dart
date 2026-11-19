@@ -62,7 +62,21 @@ class _SearchScreenState extends State<SearchScreen>
       final r = await YtMusicApi.search(q, kind: _kind);
       if (mounted) setState(() => _results = r);
     } catch (e) {
-      if (mounted) setState(() => _error = 'Pencarian gagal. Cek koneksi lo.');
+      final q2 = q.toLowerCase();
+      final local = PlayerService.i.downloaded
+          .where((s) =>
+              s.title.toLowerCase().contains(q2) ||
+              s.artist.toLowerCase().contains(q2))
+          .map(Entry.fromSong)
+          .toList();
+      if (mounted) {
+        setState(() {
+          _results = local;
+          if (local.isEmpty) {
+            _error = 'Offline. Tidak ada lagu unduhan yang cocok.';
+          }
+        });
+      }
     }
     if (mounted) setState(() => _loading = false);
   }
@@ -118,7 +132,7 @@ class _SearchScreenState extends State<SearchScreen>
                   },
                   child: Glass(
                     radius: 18,
-                    blur: 16,
+                    blur: 0,
                     strength: _kind == e.key ? 2.2 : 0.8,
                     padding:
                         const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -161,7 +175,7 @@ class _SearchScreenState extends State<SearchScreen>
                 onTap: () => _go(r),
                 child: Glass(
                   radius: 18,
-                  blur: 16,
+                  blur: 0,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   child: Text(r),
@@ -190,7 +204,7 @@ class _SearchScreenState extends State<SearchScreen>
             onTap: () => openEntry(context, e, songs),
             child: Glass(
               radius: 22,
-              blur: 20,
+              blur: 0,
               padding: const EdgeInsets.all(8),
               child: Row(children: [
                 Art(e.thumb, size: 54, radius: e.isArtist ? 27 : 14),
