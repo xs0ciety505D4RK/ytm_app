@@ -5,6 +5,7 @@ import '../models/song.dart';
 import '../services/player_service.dart';
 import '../ui/glass.dart';
 import '../ui/nav.dart';
+import '../ui/song_menu.dart';
 import '../ui/widgets.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -192,10 +193,11 @@ class _SearchScreenState extends State<SearchScreen>
       itemBuilder: (context, i) {
         final e = _results[i];
         if (e.song != null) {
+          final song = e.song!;
           return SongTile(
-            song: e.song!,
+            song: song,
             onTap: () => PlayerService.i
-                .playQueue(songs, songs.indexWhere((s) => s.id == e.song!.id)),
+                .playQueue(songs, songs.indexWhere((s) => s.id == song.id)),
           );
         }
         return Padding(

@@ -203,9 +203,13 @@ class _NowPlayingState extends State<NowPlaying> {
                     StreamBuilder<PlayerState>(
                       stream: p.player.playerStateStream,
                       builder: (context, snap) {
+                        // Spinner hanya saat fetch stream (p.loading) atau
+                        // saat audio source pertama kali loading.
+                        // ProcessingState.buffering TIDAK dipakai karena
+                        // YouTube stream selalu buffering terus-menerus.
                         final busy = p.loading ||
                             snap.data?.processingState ==
-                                ProcessingState.buffering;
+                                ProcessingState.loading;
                         return Glass(
                           radius: 40,
                           strength: 2,
