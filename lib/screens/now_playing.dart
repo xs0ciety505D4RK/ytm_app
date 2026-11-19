@@ -234,10 +234,10 @@ class _NowPlayingState extends State<NowPlaying> {
                     IconButton(
                         onPressed: p.cycleRepeat,
                         icon: Icon(
-                            p.repeat == RepeatMode.one
+                            p.repeat == RepeatKind.one
                                 ? Icons.repeat_one_rounded
                                 : Icons.repeat_rounded,
-                            color: p.repeat == RepeatMode.off
+                            color: p.repeat == RepeatKind.off
                                 ? Colors.white60
                                 : _accent)),
                   ],
