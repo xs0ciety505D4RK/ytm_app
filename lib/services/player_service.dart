@@ -107,8 +107,9 @@ class PlayerService extends ChangeNotifier {
   Future<List<AudioOnlyStreamInfo>> _streams(String id) async {
     Object? last;
     final attempts = <List<YoutubeApiClient>?>[
-      null,
+      [YoutubeApiClient.ios],
       [YoutubeApiClient.androidVr],
+      null,
       [YoutubeApiClient.tv],
     ];
     for (final clients in attempts) {
