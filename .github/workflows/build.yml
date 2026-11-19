@@ -1,1 +1,55 @@
+name: Build APK
 
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # Folder android/ dibuat otomatis, jadi repo tetap kecil.
+      - name: Generate Android platform
+        run: |
+          flutter create . --platforms=android --org com.glass --project-name ytm_glass
+          rm -rf test
+
+      - name: Patch Android (background playback, permissions)
+        run: python3 tool/patch_android.py
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Opsional: set secret/variable BACKEND_URL (link Vercel lo)
+      - name: Build release APK
+        run: |
+          flutter build apk --release --split-per-abi \
+            --dart-define=BACKEND_URL=${{ vars.BACKEND_URL }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytm-glass-apk
+          path: build/app/outputs/flutter-apk/*.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          files: build/app/outputs/flutter-apk/*.apk
