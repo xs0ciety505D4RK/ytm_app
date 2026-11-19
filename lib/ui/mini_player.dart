@@ -25,6 +25,7 @@ class MiniPlayer extends StatelessWidget {
           },
           child: Glass(
             radius: 30,
+            blur: 22,
             strength: 1.4,
             padding: const EdgeInsets.all(8),
             child: Row(children: [

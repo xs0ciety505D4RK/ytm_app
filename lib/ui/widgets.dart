@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/player_service.dart';
@@ -12,6 +13,8 @@ class Art extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final px = ((size ?? 640) * dpr).round().clamp(64, 1024);
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: SizedBox(
@@ -19,11 +22,15 @@ class Art extends StatelessWidget {
         height: size,
         child: url.isEmpty
             ? const ColoredBox(color: Colors.white12)
-            : Image.network(url,
+            : CachedNetworkImage(
+                imageUrl: url,
                 fit: BoxFit.cover,
-                gaplessPlayback: true,
-                errorBuilder: (_, __, ___) =>
-                    const ColoredBox(color: Colors.white12)),
+                memCacheWidth: px,
+                fadeInDuration: const Duration(milliseconds: 120),
+                placeholder: (_, __) => const ColoredBox(color: Colors.white12),
+                errorWidget: (_, __, ___) =>
+                    const ColoredBox(color: Colors.white12),
+              ),
       ),
     );
   }
@@ -57,7 +64,7 @@ class SongTile extends StatelessWidget {
                 onRemove: onRemove, removeLabel: removeLabel),
             child: Glass(
               radius: 22,
-              blur: 20,
+              blur: 0,
               strength: active ? 1.8 : 1,
               padding: const EdgeInsets.all(8),
               child: Row(children: [

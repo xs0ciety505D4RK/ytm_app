@@ -48,7 +48,7 @@ class BubbleNav extends StatelessWidget {
         ),
         child: Glass(
           radius: 36,
-          blur: 30,
+          blur: 22,
           child: SizedBox(
             height: height,
             child: AnimatedBuilder(
