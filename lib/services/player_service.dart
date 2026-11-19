@@ -53,6 +53,8 @@ class PlayerService extends ChangeNotifier {
   List<Song> downloaded = [];
   Map<String, String> downloadPaths = {};
   final Map<String, double> progress = {};
+  // Untuk membatalkan unduhan
+  final Map<String, bool> _cancelDownload = {};
 
   // sleep timer
   Timer? _sleep;
@@ -113,7 +115,8 @@ class PlayerService extends ChangeNotifier {
       try {
         final m = clients == null
             ? await _yt.videos.streamsClient.getManifest(id)
-            : await _yt.videos.streamsClient.getManifest(id, ytClients: clients);
+            : await _yt.videos.streamsClient
+                .getManifest(id, ytClients: clients);
         final l = m.audioOnly.toList();
         if (l.isNotEmpty) {
           l.sort((a, b) =>
@@ -333,38 +336,84 @@ class PlayerService extends ChangeNotifier {
 
   bool isDownloaded(Song s) => downloadPaths.containsKey(s.id);
 
-  /// Unduh audio + lirik (dan terjemahannya) supaya bisa dipakai tanpa internet.
+  /// Batalkan unduhan yang sedang berjalan.
+  void cancelDownload(String id) {
+    _cancelDownload[id] = true;
+  }
+
+  /// Unduh audio + lirik supaya bisa dipakai tanpa internet.
+  /// - Progress disimpan di [progress]
+  /// - Error ditangani dengan bersih (file sementara dihapus)
+  /// - Bisa dibatalkan via [cancelDownload]
   Future<void> download(Song s) async {
     if (isDownloaded(s) || progress.containsKey(s.id)) return;
     progress[s.id] = 0;
+    _cancelDownload.remove(s.id);
     notifyListeners();
+
+    File? tempFile;
     try {
       final list = await _streams(s.id);
       final a = list.first;
       final dir = await getApplicationDocumentsDirectory();
-      final f = File('${dir.path}/dl_${s.id}.${a.container.name}');
-      final sink = f.openWrite();
+      tempFile = File('${dir.path}/dl_${s.id}.${a.container.name}');
+
+      // Hapus file lama jika ada (dari download gagal sebelumnya)
+      if (tempFile.existsSync()) await tempFile.delete();
+
+      final sink = tempFile.openWrite();
       final total = a.size.totalBytes;
       var got = 0;
       var lastShown = 0.0;
-      await for (final chunk in _yt.videos.streamsClient.get(a)) {
-        sink.add(chunk);
-        got += chunk.length;
-        final pr = total > 0 ? got / total : 0.0;
-        if (pr - lastShown > 0.05) {
-          lastShown = pr;
-          progress[s.id] = pr;
-          notifyListeners();
+      var failed = false;
+
+      try {
+        await for (final chunk in _yt.videos.streamsClient.get(a)) {
+          // Cek pembatalan
+          if (_cancelDownload[s.id] == true) {
+            failed = true;
+            break;
+          }
+          sink.add(chunk);
+          got += chunk.length;
+          final pr = total > 0 ? got / total : 0.0;
+          if (pr - lastShown > 0.03) {
+            lastShown = pr;
+            progress[s.id] = pr;
+            notifyListeners();
+          }
+        }
+      } finally {
+        await sink.flush();
+        await sink.close();
+      }
+
+      if (failed || (_cancelDownload[s.id] == true)) {
+        // Hapus file tidak lengkap
+        if (tempFile.existsSync()) await tempFile.delete();
+      } else {
+        // Verifikasi file tidak kosong
+        if (tempFile.existsSync() && tempFile.lengthSync() > 1024) {
+          downloadPaths[s.id] = tempFile.path;
+          downloaded.insert(0, s);
+          await _save();
+          // Lirik ikut tersimpan (gagal pun tidak masalah)
+          unawaited(LyricsApi.prefetch(s));
+        } else {
+          if (tempFile.existsSync()) await tempFile.delete();
         }
       }
-      await sink.close();
-      downloadPaths[s.id] = f.path;
-      downloaded.insert(0, s);
-      await _save();
-      // lirik ikut tersimpan (gagal pun tidak masalah)
-      unawaited(LyricsApi.prefetch(s));
-    } catch (_) {}
+    } catch (e) {
+      // Bersihkan file sementara jika error
+      try {
+        if (tempFile != null && tempFile.existsSync()) {
+          await tempFile.delete();
+        }
+      } catch (_) {}
+    }
+
     progress.remove(s.id);
+    _cancelDownload.remove(s.id);
     notifyListeners();
   }
 
@@ -412,13 +461,17 @@ class PlayerService extends ChangeNotifier {
         (p.getStringList('downloads') ?? []).map(Song.decode).toList();
     final dl = p.getString('dl_paths');
     if (dl != null) {
-      downloadPaths = Map<String, String>.from(jsonDecode(dl));
-    }
-    final raw = p.getString('playlists');
-    if (raw != null) {
-      final m = jsonDecode(raw) as Map<String, dynamic>;
-      playlists = m.map((k, v) =>
-          MapEntry(k, (v as List).map((e) => Song.fromJson(e)).toList()));
+      final raw = Map<String, dynamic>.from(jsonDecode(dl));
+      // Hapus path yang filenya sudah tidak ada
+      downloadPaths = {};
+      for (final entry in raw.entries) {
+        final path = entry.value as String;
+        if (File(path).existsSync()) {
+          downloadPaths[entry.key] = path;
+        }
+      }
+      // Sinkronkan list downloaded dengan path yang valid
+      downloaded.retainWhere((s) => downloadPaths.containsKey(s.id));
     }
     notifyListeners();
   }
