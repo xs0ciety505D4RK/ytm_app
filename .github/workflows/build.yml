@@ -43,6 +43,42 @@ jobs:
             --target-platform android-arm,android-arm64 \
             --dart-define=BACKEND_URL=https://ytm-glass-backend.vercel.app
 
+      # Flutter's generated release build uses a runner-local debug key. Replace
+      # it with the stable repository key before any artifact is uploaded.
+      - name: Sign APKs with stable release key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${ANDROID_KEYSTORE_BASE64:?Missing ANDROID_KEYSTORE_BASE64 secret}"
+          : "${ANDROID_KEYSTORE_PASSWORD:?Missing ANDROID_KEYSTORE_PASSWORD secret}"
+          : "${ANDROID_KEY_ALIAS:?Missing ANDROID_KEY_ALIAS secret}"
+          : "${ANDROID_KEY_PASSWORD:?Missing ANDROID_KEY_PASSWORD secret}"
+          KEYSTORE="$RUNNER_TEMP/ytm-glass-release.jks"
+          trap 'rm -f "$KEYSTORE"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK path is not set}}"
+          APKSIGNER="$(find "$SDK_ROOT/build-tools" -mindepth 2 -maxdepth 2 -type f -name apksigner -print | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          shopt -s nullglob
+          APKS=(build/app/outputs/flutter-apk/*.apk)
+          ((${#APKS[@]} > 0))
+          for APK in "${APKS[@]}"; do
+            SIGNED="${APK%.apk}.stable.apk"
+            "$APKSIGNER" sign \
+              --ks "$KEYSTORE" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --key-pass env:ANDROID_KEY_PASSWORD \
+              --out "$SIGNED" "$APK"
+            "$APKSIGNER" verify --verbose --print-certs "$SIGNED"
+            mv -f "$SIGNED" "$APK"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: ytm-glass-apk
