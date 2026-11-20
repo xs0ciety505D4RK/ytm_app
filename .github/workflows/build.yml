@@ -36,12 +36,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Opsional: set secret/variable BACKEND_URL (link Vercel lo)
+      # URL backend production Vercel.
       - name: Build release APK
         run: |
           flutter build apk --release --split-per-abi \
             --target-platform android-arm,android-arm64 \
-            --dart-define=BACKEND_URL=${{ vars.BACKEND_URL || 'https://ytm-glass-backend.vercel.app' }}
+            --dart-define=BACKEND_URL=https://ytm-glass-backend.vercel.app
 
       - uses: actions/upload-artifact@v4
         with:
