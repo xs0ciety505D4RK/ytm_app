@@ -124,8 +124,9 @@ class PlayerService extends ChangeNotifier {
       {void Function(String stage)? onStage}) async {
     Object? last;
     // iOS GVS streams can require a PO Token, which this app cannot generate.
-    // Android VR is first; TV is a bounded fallback and needs no PO Token.
+    // Prefer the SDK-less Android client; keep VR and TV as fallbacks.
     final attempts = <MapEntry<String, List<YoutubeApiClient>>>[
+      MapEntry('Android SDK-less', [YoutubeApiClient.androidSdkless]),
       MapEntry('Android VR', [YoutubeApiClient.androidVr]),
       MapEntry('TV', [YoutubeApiClient.tv]),
     ];
@@ -170,8 +171,12 @@ class PlayerService extends ChangeNotifier {
   }
 
   String _short(Object e) {
-    final t = e.toString().replaceAll('\n', ' ');
-    return t.length > 90 ? '${t.substring(0, 90)}…' : t;
+    final t = e.toString().replaceAll('\n', ' ').trim();
+    final reason = RegExp(r'Reason:\s*(.+)$').firstMatch(t)?.group(1);
+    final message = reason == null || reason.isEmpty
+        ? t
+        : 'YouTube: $reason';
+    return message.length > 180 ? '${message.substring(0, 180)}…' : message;
   }
 
   void _setLoadingStage(int req, String stage) {
