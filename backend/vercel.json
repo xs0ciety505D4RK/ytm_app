@@ -1,3 +1,6 @@
 {
-  "functions": { "api/*.js": { "maxDuration": 15 } }
+  "functions": {
+    "api/yt.js": { "maxDuration": 15 },
+    "api/audio.js": { "maxDuration": 300 }
+  }
 }

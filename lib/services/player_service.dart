@@ -43,6 +43,7 @@ class PlayerService extends ChangeNotifier {
   String? error;
   int _req = 0;
   bool _advancing = false;
+  int _proxyRecoveryReq = -1;
 
   // koleksi
   List<Song> likes = [];
@@ -86,6 +87,20 @@ class PlayerService extends ChangeNotifier {
       }
       notifyListeners();
     });
+    _player.playbackEventStream.listen(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {
+        if (kBackend.isEmpty ||
+            loading ||
+            current == null ||
+            _proxyRecoveryReq == _req) {
+          return;
+        }
+        final req = _req;
+        _proxyRecoveryReq = req;
+        unawaited(_recoverWithAudioProxy(req));
+      },
+    );
     _player.durationStream.listen((d) {
       final s = current;
       if (s != null && d != null) _handler.mediaItem.add(_item(s, d));
@@ -136,6 +151,34 @@ class PlayerService extends ChangeNotifier {
     return t.length > 90 ? '${t.substring(0, 90)}…' : t;
   }
 
+  Uri _audioProxyUri(Uri source) {
+    final base = kBackend.replaceFirst(RegExp(r'/+$'), '');
+    final encoded = base64Url
+        .encode(utf8.encode(source.toString()))
+        .replaceAll('=', '');
+    return Uri.parse('$base/api/audio?u=$encoded');
+  }
+
+  Future<void> _recoverWithAudioProxy(int req) async {
+    if (req != _req || kBackend.isEmpty || current == null) return;
+    final song = current!;
+    try {
+      final streams = await _streams(song.id);
+      for (final info in streams.take(4)) {
+        if (req != _req) return;
+        try {
+          await _player.stop();
+          await _player.setAudioSource(
+            AudioSource.uri(_audioProxyUri(info.url)),
+          );
+          if (req != _req) return;
+          await _player.play();
+          return;
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
   // ---------- pemutaran ----------
 
   Future<void> playQueue(List<Song> q, int i) async {
@@ -151,6 +194,7 @@ class PlayerService extends ChangeNotifier {
     final song = queue[i];
     loading = true;
     error = null;
+    _proxyRecoveryReq = -1;
     art.value = song.thumb;
     _handler.mediaItem.add(_item(song));
     _pushHistory(song);
@@ -163,12 +207,24 @@ class PlayerService extends ChangeNotifier {
         final list = await _streams(song.id);
         if (req != _req) return;
         final info = list.first;
-        try {
-          await _player.setAudioSource(AudioSource.uri(info.url));
-        } catch (_) {
-          if (req != _req) return;
-          await _player.setAudioSource(YtStreamSource(_yt, info));
+        final sources = <AudioSource>[AudioSource.uri(info.url)];
+        if (kBackend.isNotEmpty) {
+          sources.add(AudioSource.uri(_audioProxyUri(info.url)));
         }
+        sources.add(YtStreamSource(_yt, info));
+        Object? last;
+        var opened = false;
+        for (final source in sources) {
+          if (req != _req) return;
+          try {
+            await _player.setAudioSource(source);
+            opened = true;
+            break;
+          } catch (e) {
+            last = e;
+          }
+        }
+        if (!opened) throw last ?? Exception('Semua sumber audio gagal dibuka');
       }
       if (req != _req) return;
       _player.play();
