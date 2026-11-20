@@ -135,8 +135,12 @@ class PlayerService extends ChangeNotifier {
                 .getManifest(id, ytClients: clients);
         final l = m.audioOnly.toList();
         if (l.isNotEmpty) {
-          l.sort((a, b) =>
-              b.bitrate.bitsPerSecond.compareTo(a.bitrate.bitsPerSecond));
+          l.sort((a, b) {
+            final byCompatibility =
+                _streamCompatibility(a).compareTo(_streamCompatibility(b));
+            if (byCompatibility != 0) return byCompatibility;
+            return b.bitrate.bitsPerSecond.compareTo(a.bitrate.bitsPerSecond);
+          });
           return l;
         }
       } catch (e) {
@@ -144,6 +148,17 @@ class PlayerService extends ChangeNotifier {
       }
     }
     throw last ?? Exception('Tidak ada stream audio');
+  }
+
+  int _streamCompatibility(AudioOnlyStreamInfo info) {
+    final codec = '${info.audioCodec} ${info.container.name}'.toLowerCase();
+    if (codec.contains('aac') ||
+        codec.contains('mp4a') ||
+        codec.contains('mp4')) {
+      return 0;
+    }
+    if (codec.contains('opus')) return 1;
+    return 2;
   }
 
   String _short(Object e) {
@@ -206,23 +221,40 @@ class PlayerService extends ChangeNotifier {
       } else {
         final list = await _streams(song.id);
         if (req != _req) return;
-        final info = list.first;
-        final sources = <AudioSource>[AudioSource.uri(info.url)];
-        if (kBackend.isNotEmpty) {
-          sources.add(AudioSource.uri(_audioProxyUri(info.url)));
-        }
-        sources.add(YtStreamSource(_yt, info));
         Object? last;
         var opened = false;
-        for (final source in sources) {
-          if (req != _req) return;
-          try {
-            await _player.setAudioSource(source);
-            opened = true;
-            break;
-          } catch (e) {
-            last = e;
+        // Do not rely on one high-bitrate format: it may be unsupported by a
+        // device or rejected upstream. Try up to two compatible alternatives.
+        for (final info in list.take(2)) {
+          final sources = <MapEntry<String, AudioSource>>[
+            if (kBackend.isNotEmpty)
+              MapEntry('relay', AudioSource.uri(_audioProxyUri(info.url))),
+            MapEntry('langsung', AudioSource.uri(info.url)),
+            MapEntry('cadangan', YtStreamSource(_yt, info)),
+          ];
+          for (final candidate in sources) {
+            if (req != _req) return;
+            try {
+              try {
+                await _player.stop().timeout(const Duration(seconds: 2));
+              } catch (_) {}
+              await _player
+                  .setAudioSource(candidate.value)
+                  .timeout(const Duration(seconds: 10));
+              opened = true;
+              break;
+            } catch (e) {
+              last = e;
+              debugPrint(
+                '[PlayerService] ${candidate.key} gagal; '
+                'itag=${info.tag} ${info.container.name}/${info.audioCodec}: ${_short(e)}',
+              );
+              try {
+                await _player.stop().timeout(const Duration(seconds: 2));
+              } catch (_) {}
+            }
           }
+          if (opened) break;
         }
         if (!opened) throw last ?? Exception('Semua sumber audio gagal dibuka');
       }

@@ -13,31 +13,29 @@ class YtStreamSource extends StreamAudioSource {
   @override
   Future<StreamAudioResponse> request([int? start, int? end]) async {
     final total = info.size.totalBytes;
-    final s = start ?? 0;
-    final e = (end == null || end > total) ? total : end;
     final raw = _yt.videos.streamsClient.get(info);
-    return StreamAudioResponse(
-      sourceLength: total,
-      contentLength: e - s,
-      offset: s,
-      stream: (s == 0 && e == total) ? raw : _slice(raw, s, e),
-      contentType: 'audio/${info.container.name}',
-    );
-  }
 
-  Stream<List<int>> _slice(Stream<List<int>> src, int start, int end) async* {
-    var pos = 0;
-    await for (final c in src) {
-      final next = pos + c.length;
-      if (next <= start) {
-        pos = next;
-        continue;
-      }
-      final from = start > pos ? start - pos : 0;
-      final to = end < next ? end - pos : c.length;
-      yield (from == 0 && to == c.length) ? c : c.sublist(from, to);
-      pos = next;
-      if (pos >= end) break;
+    // YouTube may omit the size. Reporting 0 bytes makes ExoPlayer treat a
+    // perfectly valid response as an empty source. The underlying client also
+    // starts every download at byte zero, so don't advertise Range support.
+    if (total <= 0) {
+      return StreamAudioResponse(
+        rangeRequestsSupported: false,
+        sourceLength: null,
+        contentLength: null,
+        offset: null,
+        stream: raw,
+        contentType: info.codec.toString(),
+      );
     }
+
+    return StreamAudioResponse(
+      rangeRequestsSupported: false,
+      sourceLength: null,
+      contentLength: total,
+      offset: null,
+      stream: raw,
+      contentType: info.codec.toString(),
+    );
   }
 }

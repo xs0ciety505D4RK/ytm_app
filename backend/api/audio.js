@@ -2,6 +2,7 @@ import { Readable } from 'node:stream';
 
 const MAX_URL_LENGTH = 9000;
 const MAX_REDIRECTS = 3;
+const UPSTREAM_HEADERS_TIMEOUT_MS = 12000;
 const ALLOWED_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 function isAllowedVideoUrl(value) {
@@ -33,7 +34,21 @@ function readSourceUrl(encoded) {
 }
 
 async function fetchVideo(url, init, redirects = 0) {
-  const response = await fetch(url, { ...init, redirect: 'manual' });
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    UPSTREAM_HEADERS_TIMEOUT_MS,
+  );
+  let response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      redirect: 'manual',
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (![301, 302, 303, 307, 308].includes(response.status)) return response;
 
   const location = response.headers.get('location');
@@ -71,6 +86,7 @@ export default async function handler(req, res) {
     return res.status(416).json({ error: 'invalid range header' });
   }
 
+  const startedAt = Date.now();
   try {
     const upstream = await fetchVideo(sourceUrl, {
       method: req.method,
@@ -84,6 +100,15 @@ export default async function handler(req, res) {
           'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
       },
     });
+
+    // Never log the signed Googlevideo URL or query string.
+    console.info('[audio-relay]', JSON.stringify({
+      status: upstream.status,
+      elapsedMs: Date.now() - startedAt,
+      range: Boolean(range),
+      contentType: upstream.headers.get('content-type'),
+      contentLength: upstream.headers.get('content-length'),
+    }));
 
     for (const name of [
       'accept-ranges',
@@ -100,9 +125,16 @@ export default async function handler(req, res) {
     res.status(upstream.status);
     if (req.method === 'HEAD' || !upstream.body) return res.end();
     Readable.fromWeb(upstream.body)
-      .on('error', () => res.destroy())
+      .on('error', (error) => {
+        console.warn('[audio-relay] stream failure', error?.name || 'Error');
+        res.destroy();
+      })
       .pipe(res);
-  } catch {
+  } catch (error) {
+    console.warn('[audio-relay] upstream failure', JSON.stringify({
+      elapsedMs: Date.now() - startedAt,
+      error: error?.name || 'Error',
+    }));
     if (!res.headersSent) {
       res.status(502).json({ error: 'audio upstream request failed' });
     } else {
