@@ -157,6 +157,12 @@ class _NowPlayingState extends State<NowPlaying> {
                     child: Text(p.error!,
                         style: const TextStyle(color: Color(0xFFFF8A8A))),
                   ),
+                if (p.loading && p.loadingStage != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(p.loadingStage!,
+                        style: const TextStyle(color: Colors.white60)),
+                  ),
                 StreamBuilder<Duration>(
                   stream: p.player.positionStream,
                   builder: (context, snap) {
@@ -202,14 +208,10 @@ class _NowPlayingState extends State<NowPlaying> {
                         icon: const Icon(Icons.skip_previous_rounded)),
                     StreamBuilder<PlayerState>(
                       stream: p.player.playerStateStream,
-                      builder: (context, snap) {
-                        // Spinner hanya saat fetch stream (p.loading) atau
-                        // saat audio source pertama kali loading.
-                        // ProcessingState.buffering TIDAK dipakai karena
-                        // YouTube stream selalu buffering terus-menerus.
-                        final busy = p.loading ||
-                            snap.data?.processingState ==
-                                ProcessingState.loading;
+                      builder: (context, _) {
+                        // PlayerService memiliki watchdog dan mematikan spinner
+                        // setelah batas startup, termasuk jika native state macet.
+                        final busy = p.loading;
                         return Glass(
                           radius: 40,
                           strength: 2,
