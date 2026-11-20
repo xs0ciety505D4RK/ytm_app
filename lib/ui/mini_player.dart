@@ -41,7 +41,7 @@ class MiniPlayer extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                             fontSize: 14, fontWeight: FontWeight.w700)),
-                    Text(p.error ?? s.artist,
+                    Text(p.loadingStage ?? p.error ?? s.artist,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -50,16 +50,13 @@ class MiniPlayer extends StatelessWidget {
                 ),
               ),
               // Gunakan StreamBuilder agar spinner HANYA tampil saat loading
-              // benar-benar dibutuhkan, dan berhenti begitu buffering selesai.
+              // dibutuhkan; masa hidupnya dikontrol watchdog PlayerService.
               StreamBuilder<PlayerState>(
                 stream: p.player.playerStateStream,
-                builder: (context, snap) {
-                  final state = snap.data;
-                  // Spinner hanya saat p.loading (stream fetch) ATAU
-                  // saat buffering awal (loading), bukan saat normal buffering
-                  // yang terjadi terus-menerus pada stream YouTube.
-                  final busy = p.loading ||
-                      (state?.processingState == ProcessingState.loading);
+                builder: (context, _) {
+                  // PlayerService owns a bounded startup state; native loading
+                  // events alone must not keep this spinner alive forever.
+                  final busy = p.loading;
                   return busy
                       ? const Padding(
                           padding: EdgeInsets.all(12),

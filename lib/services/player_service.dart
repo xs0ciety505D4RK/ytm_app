@@ -40,6 +40,7 @@ class PlayerService extends ChangeNotifier {
   bool shuffle = false;
   RepeatKind repeat = RepeatKind.off;
   bool loading = false;
+  String? loadingStage;
   String? error;
   int _req = 0;
   bool _advancing = false;
@@ -119,20 +120,21 @@ class PlayerService extends ChangeNotifier {
   // ---------- stream YouTube ----------
 
   /// Coba beberapa klien sampai ada yang mengembalikan stream audio.
-  Future<List<AudioOnlyStreamInfo>> _streams(String id) async {
+  Future<List<AudioOnlyStreamInfo>> _streams(String id,
+      {void Function(String stage)? onStage}) async {
     Object? last;
-    final attempts = <List<YoutubeApiClient>?>[
-      [YoutubeApiClient.ios],
-      [YoutubeApiClient.androidVr],
-      null,
-      [YoutubeApiClient.tv],
+    // iOS GVS streams can require a PO Token, which this app cannot generate.
+    // Android VR is first; TV is a bounded fallback and needs no PO Token.
+    final attempts = <MapEntry<String, List<YoutubeApiClient>>>[
+      MapEntry('Android VR', [YoutubeApiClient.androidVr]),
+      MapEntry('TV', [YoutubeApiClient.tv]),
     ];
-    for (final clients in attempts) {
+    for (final attempt in attempts) {
+      onStage?.call('Mencari stream audio (${attempt.key})...');
       try {
-        final m = clients == null
-            ? await _yt.videos.streamsClient.getManifest(id)
-            : await _yt.videos.streamsClient
-                .getManifest(id, ytClients: clients);
+        final m = await _yt.videos.streamsClient
+            .getManifest(id, ytClients: attempt.value)
+            .timeout(const Duration(seconds: 12));
         final l = m.audioOnly.toList();
         if (l.isNotEmpty) {
           l.sort((a, b) {
@@ -145,6 +147,12 @@ class PlayerService extends ChangeNotifier {
         }
       } catch (e) {
         last = e;
+        debugPrint(
+          '[PlayerService] manifest ${attempt.key} gagal: ${_short(e)}',
+        );
+        // Future.timeout does not cancel the underlying network request. Avoid
+        // starting a second manifest request while the first may still run.
+        if (e is TimeoutException) break;
       }
     }
     throw last ?? Exception('Tidak ada stream audio');
@@ -166,6 +174,47 @@ class PlayerService extends ChangeNotifier {
     return t.length > 90 ? '${t.substring(0, 90)}…' : t;
   }
 
+  void _setLoadingStage(int req, String stage) {
+    if (req != _req) return;
+    loadingStage = stage;
+    notifyListeners();
+  }
+
+  Duration _stageTimeout(Stopwatch started, Duration requested) {
+    const startupLimit = Duration(seconds: 60);
+    final remaining = startupLimit - started.elapsed;
+    if (remaining <= Duration.zero) {
+      throw TimeoutException('Startup audio melewati 60 detik', startupLimit);
+    }
+    return remaining.compareTo(requested) < 0 ? remaining : requested;
+  }
+
+  Future<void> _prepareAndStart(
+    AudioSource source, {
+    required int req,
+    required Stopwatch started,
+    required String label,
+  }) async {
+    _setLoadingStage(req, 'Membuka sumber audio ($label)...');
+    try {
+      await _player
+          .stop()
+          .timeout(_stageTimeout(started, const Duration(seconds: 2)));
+    } catch (_) {}
+    if (req != _req) return;
+    await _player
+        .setAudioSource(source)
+        .timeout(_stageTimeout(started, const Duration(seconds: 10)));
+    if (req != _req) return;
+
+    _setLoadingStage(req, 'Menunggu audio mulai...');
+    unawaited(_player.play());
+    await _player.positionStream
+        .firstWhere((position) => position > Duration.zero)
+        .timeout(_stageTimeout(started, const Duration(seconds: 10)));
+    if (req != _req) return;
+  }
+
   Uri _audioProxyUri(Uri source) {
     final base = kBackend.replaceFirst(RegExp(r'/+$'), '');
     final encoded = base64Url
@@ -182,12 +231,12 @@ class PlayerService extends ChangeNotifier {
       for (final info in streams.take(4)) {
         if (req != _req) return;
         try {
-          await _player.stop();
+          await _player.stop().timeout(const Duration(seconds: 2));
           await _player.setAudioSource(
             AudioSource.uri(_audioProxyUri(info.url)),
-          );
+          ).timeout(const Duration(seconds: 10));
           if (req != _req) return;
-          await _player.play();
+          unawaited(_player.play());
           return;
         } catch (_) {}
       }
@@ -208,18 +257,28 @@ class PlayerService extends ChangeNotifier {
     index = i;
     final song = queue[i];
     loading = true;
+    loadingStage = 'Menyiapkan audio...';
     error = null;
     _proxyRecoveryReq = -1;
     art.value = song.thumb;
     _handler.mediaItem.add(_item(song));
     _pushHistory(song);
     notifyListeners();
+    final started = Stopwatch()..start();
     try {
       final local = downloadPaths[song.id];
       if (local != null && File(local).existsSync()) {
-        await _player.setAudioSource(AudioSource.uri(Uri.file(local)));
+        await _prepareAndStart(
+          AudioSource.uri(Uri.file(local)),
+          req: req,
+          started: started,
+          label: 'unduhan lokal',
+        );
       } else {
-        final list = await _streams(song.id);
+        final list = await _streams(
+          song.id,
+          onStage: (stage) => _setLoadingStage(req, stage),
+        );
         if (req != _req) return;
         Object? last;
         var opened = false;
@@ -234,13 +293,14 @@ class PlayerService extends ChangeNotifier {
           ];
           for (final candidate in sources) {
             if (req != _req) return;
+            if (started.elapsed >= const Duration(seconds: 60)) break;
             try {
-              try {
-                await _player.stop().timeout(const Duration(seconds: 2));
-              } catch (_) {}
-              await _player
-                  .setAudioSource(candidate.value)
-                  .timeout(const Duration(seconds: 10));
+              await _prepareAndStart(
+                candidate.value,
+                req: req,
+                started: started,
+                label: candidate.key,
+              );
               opened = true;
               break;
             } catch (e) {
@@ -249,21 +309,31 @@ class PlayerService extends ChangeNotifier {
                 '[PlayerService] ${candidate.key} gagal; '
                 'itag=${info.tag} ${info.container.name}/${info.audioCodec}: ${_short(e)}',
               );
+              if (req != _req) return;
               try {
                 await _player.stop().timeout(const Duration(seconds: 2));
               } catch (_) {}
             }
           }
           if (opened) break;
+          if (started.elapsed >= const Duration(seconds: 60)) break;
         }
         if (!opened) throw last ?? Exception('Semua sumber audio gagal dibuka');
       }
-      if (req != _req) return;
-      _player.play();
     } catch (e) {
-      if (req == _req) error = 'Gagal memutar: ${_short(e)}';
+      if (req == _req) {
+        try {
+          await _player.stop().timeout(const Duration(seconds: 2));
+        } catch (_) {}
+        error = e is TimeoutException
+            ? 'Gagal memutar: waktu habis pada ${loadingStage ?? 'audio'}.'
+            : 'Gagal memutar: ${_short(e)}';
+      }
     }
-    if (req == _req) loading = false;
+    if (req == _req) {
+      loading = false;
+      loadingStage = null;
+    }
     notifyListeners();
   }
 
