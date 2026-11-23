@@ -120,12 +120,36 @@ class PlayerService extends ChangeNotifier {
   // ---------- stream YouTube ----------
 
   /// Coba beberapa klien sampai ada yang mengembalikan stream audio.
+  static const YoutubeApiClient _ytMusicPlayer = YoutubeApiClient(
+    {
+      'context': {
+        'client': {
+          'clientName': 'WEB_REMIX',
+          'clientVersion': '1.20261115.01.00',
+          'userAgent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                  '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+          'hl': 'id',
+          'gl': 'ID',
+        }
+      }
+    },
+    'https://music.youtube.com/youtubei/v1/player?key='
+        'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30&prettyPrint=false',
+    headers: {
+      'Origin': 'https://music.youtube.com',
+      'Referer': 'https://music.youtube.com/',
+    },
+  );
+
   Future<List<AudioOnlyStreamInfo>> _streams(String id,
       {void Function(String stage)? onStage}) async {
     Object? last;
-    // iOS GVS streams can require a PO Token, which this app cannot generate.
-    // Prefer the SDK-less Android client; keep VR and TV as fallbacks.
+    // Keep YouTube Music browse/search unchanged. Try its player client first,
+    // then Music Android and SDK-less Android before the generic fallbacks.
     final attempts = <MapEntry<String, List<YoutubeApiClient>>>[
+      MapEntry('YouTube Music WEB_REMIX', [_ytMusicPlayer]),
+      MapEntry('YouTube Music Android', [YoutubeApiClient.androidMusic]),
       MapEntry('Android SDK-less', [YoutubeApiClient.androidSdkless]),
       MapEntry('Android VR', [YoutubeApiClient.androidVr]),
       MapEntry('TV', [YoutubeApiClient.tv]),
