@@ -141,6 +141,10 @@ class SoundCloudApi {
   static int? _durationSeconds(String value) {
     final parts = value.split(':').map(int.tryParse).toList();
     if (parts.isEmpty || parts.any((part) => part == null)) return null;
-    return parts.skip(1).fold(parts.first!, (total, part) => total * 60 + part!);
+    var total = 0;
+    for (final part in parts) {
+      total = total * 60 + part!;
+    }
+    return total;
   }
 }
