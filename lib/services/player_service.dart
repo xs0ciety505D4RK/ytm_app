@@ -20,6 +20,8 @@ enum RepeatKind { off, all, one }
 class PlayerService extends ChangeNotifier {
   PlayerService._();
   static final PlayerService i = PlayerService._();
+  static const Duration _startupLimit = Duration(seconds: 18);
+  static const Duration _manifestLimit = Duration(seconds: 6);
 
   final AndroidEqualizer eq = AndroidEqualizer();
   final AndroidLoudnessEnhancer loud = AndroidLoudnessEnhancer();
@@ -120,22 +122,58 @@ class PlayerService extends ChangeNotifier {
   // ---------- stream YouTube ----------
 
   /// Coba beberapa klien sampai ada yang mengembalikan stream audio.
+  static const YoutubeApiClient _ytMusicPlayer = YoutubeApiClient(
+    {
+      'context': {
+        'client': {
+          'clientName': 'WEB_REMIX',
+          'clientVersion': '1.20261115.01.00',
+          'userAgent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                  '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+          'hl': 'id',
+          'gl': 'ID',
+        }
+      }
+    },
+    'https://music.youtube.com/youtubei/v1/player?key='
+        'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30&prettyPrint=false',
+    headers: {
+      'Origin': 'https://music.youtube.com',
+      'Referer': 'https://music.youtube.com/',
+    },
+  );
+
   Future<List<AudioOnlyStreamInfo>> _streams(String id,
-      {void Function(String stage)? onStage}) async {
+      {void Function(String stage)? onStage, Stopwatch? startup}) async {
     Object? last;
-    // iOS GVS streams can require a PO Token, which this app cannot generate.
-    // Prefer the SDK-less Android client; keep VR and TV as fallbacks.
+    final overall = startup ?? (Stopwatch()..start());
+    final manifestStarted = Stopwatch()..start();
+    // Keep YouTube Music browse/search unchanged. Try its player client first,
+    // then Music Android and SDK-less Android before the generic fallbacks.
     final attempts = <MapEntry<String, List<YoutubeApiClient>>>[
+      MapEntry('YouTube Music WEB_REMIX', [_ytMusicPlayer]),
+      MapEntry('YouTube Music Android', [YoutubeApiClient.androidMusic]),
       MapEntry('Android SDK-less', [YoutubeApiClient.androidSdkless]),
       MapEntry('Android VR', [YoutubeApiClient.androidVr]),
       MapEntry('TV', [YoutubeApiClient.tv]),
     ];
     for (final attempt in attempts) {
+      final totalRemaining = _startupLimit - overall.elapsed;
+      final manifestRemaining = _manifestLimit - manifestStarted.elapsed;
+      final remaining = totalRemaining.compareTo(manifestRemaining) < 0
+          ? totalRemaining
+          : manifestRemaining;
+      if (remaining <= Duration.zero) break;
+      const perClientLimit = Duration(seconds: 3);
+      final timeout = remaining.compareTo(perClientLimit) < 0
+          ? remaining
+          : perClientLimit;
       onStage?.call('Mencari stream audio (${attempt.key})...');
       try {
         final m = await _yt.videos.streamsClient
             .getManifest(id, ytClients: attempt.value)
-            .timeout(const Duration(seconds: 12));
+            .timeout(timeout);
         final l = m.audioOnly.toList();
         if (l.isNotEmpty) {
           l.sort((a, b) {
@@ -151,9 +189,9 @@ class PlayerService extends ChangeNotifier {
         debugPrint(
           '[PlayerService] manifest ${attempt.key} gagal: ${_short(e)}',
         );
-        // Future.timeout does not cancel the underlying network request. Avoid
-        // starting a second manifest request while the first may still run.
-        if (e is TimeoutException) break;
+        // Future.timeout does not cancel the request. The shared six-second
+        // manifest budget still allows one fast fallback client without
+        // letting a stalled client keep the user waiting for a full minute.
       }
     }
     throw last ?? Exception('Tidak ada stream audio');
@@ -186,10 +224,9 @@ class PlayerService extends ChangeNotifier {
   }
 
   Duration _stageTimeout(Stopwatch started, Duration requested) {
-    const startupLimit = Duration(seconds: 60);
-    final remaining = startupLimit - started.elapsed;
+    final remaining = _startupLimit - started.elapsed;
     if (remaining <= Duration.zero) {
-      throw TimeoutException('Startup audio melewati 60 detik', startupLimit);
+      throw TimeoutException('Startup audio melewati 18 detik', _startupLimit);
     }
     return remaining.compareTo(requested) < 0 ? remaining : requested;
   }
@@ -204,19 +241,19 @@ class PlayerService extends ChangeNotifier {
     try {
       await _player
           .stop()
-          .timeout(_stageTimeout(started, const Duration(seconds: 2)));
+          .timeout(_stageTimeout(started, const Duration(seconds: 1)));
     } catch (_) {}
     if (req != _req) return;
     await _player
         .setAudioSource(source)
-        .timeout(_stageTimeout(started, const Duration(seconds: 10)));
+        .timeout(_stageTimeout(started, const Duration(seconds: 5)));
     if (req != _req) return;
 
     _setLoadingStage(req, 'Menunggu audio mulai...');
     unawaited(_player.play());
     await _player.positionStream
         .firstWhere((position) => position > Duration.zero)
-        .timeout(_stageTimeout(started, const Duration(seconds: 10)));
+        .timeout(_stageTimeout(started, const Duration(seconds: 5)));
     if (req != _req) return;
   }
 
@@ -232,14 +269,14 @@ class PlayerService extends ChangeNotifier {
     if (req != _req || kBackend.isEmpty || current == null) return;
     final song = current!;
     try {
-      final streams = await _streams(song.id);
-      for (final info in streams.take(4)) {
+        final streams = await _streams(song.id);
+      for (final info in streams.take(2)) {
         if (req != _req) return;
         try {
-          await _player.stop().timeout(const Duration(seconds: 2));
+          await _player.stop().timeout(const Duration(seconds: 1));
           await _player.setAudioSource(
             AudioSource.uri(_audioProxyUri(info.url)),
-          ).timeout(const Duration(seconds: 10));
+          ).timeout(const Duration(seconds: 4));
           if (req != _req) return;
           unawaited(_player.play());
           return;
@@ -283,6 +320,7 @@ class PlayerService extends ChangeNotifier {
         final list = await _streams(
           song.id,
           onStage: (stage) => _setLoadingStage(req, stage),
+          startup: started,
         );
         if (req != _req) return;
         Object? last;
@@ -291,14 +329,14 @@ class PlayerService extends ChangeNotifier {
         // device or rejected upstream. Try up to two compatible alternatives.
         for (final info in list.take(2)) {
           final sources = <MapEntry<String, AudioSource>>[
-            if (kBackend.isNotEmpty)
-              MapEntry('relay', AudioSource.uri(_audioProxyUri(info.url))),
             MapEntry('langsung', AudioSource.uri(info.url)),
             MapEntry('cadangan', YtStreamSource(_yt, info)),
+            if (kBackend.isNotEmpty)
+              MapEntry('relay', AudioSource.uri(_audioProxyUri(info.url))),
           ];
           for (final candidate in sources) {
             if (req != _req) return;
-            if (started.elapsed >= const Duration(seconds: 60)) break;
+            if (started.elapsed >= _startupLimit) break;
             try {
               await _prepareAndStart(
                 candidate.value,
@@ -315,20 +353,24 @@ class PlayerService extends ChangeNotifier {
                 'itag=${info.tag} ${info.container.name}/${info.audioCodec}: ${_short(e)}',
               );
               if (req != _req) return;
-              try {
-                await _player.stop().timeout(const Duration(seconds: 2));
-              } catch (_) {}
+              if (started.elapsed < _startupLimit) {
+                try {
+                  await _player.stop().timeout(const Duration(seconds: 1));
+                } catch (_) {}
+              }
             }
           }
           if (opened) break;
-          if (started.elapsed >= const Duration(seconds: 60)) break;
+          if (started.elapsed >= _startupLimit) break;
         }
         if (!opened) throw last ?? Exception('Semua sumber audio gagal dibuka');
       }
     } catch (e) {
       if (req == _req) {
         try {
-          await _player.stop().timeout(const Duration(seconds: 2));
+          if (started.elapsed < _startupLimit) {
+            await _player.stop().timeout(const Duration(seconds: 1));
+          }
         } catch (_) {}
         error = e is TimeoutException
             ? 'Gagal memutar: waktu habis pada ${loadingStage ?? 'audio'}.'
