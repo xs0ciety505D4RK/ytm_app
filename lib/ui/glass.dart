@@ -7,15 +7,22 @@ import '../services/player_service.dart';
 /// Pengaturan performa. Blur bisa dimatikan untuk HP/tablet yang lemah.
 class Perf {
   static final ValueNotifier<bool> blur = ValueNotifier(true);
+  static final ValueNotifier<bool> dynamicIsland = ValueNotifier(false);
 
   static Future<void> load() async {
     final p = await SharedPreferences.getInstance();
     blur.value = p.getBool('blur') ?? true;
+    dynamicIsland.value = p.getBool('dynamic_island') ?? false;
   }
 
   static Future<void> setBlur(bool v) async {
     blur.value = v;
     (await SharedPreferences.getInstance()).setBool('blur', v);
+  }
+
+  static Future<void> setDynamicIsland(bool v) async {
+    dynamicIsland.value = v;
+    (await SharedPreferences.getInstance()).setBool('dynamic_island', v);
   }
 }
 

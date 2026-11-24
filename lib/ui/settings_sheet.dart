@@ -28,6 +28,17 @@ void showSettings(BuildContext context) {
                 onChanged: Perf.setBlur,
               ),
             ),
+            ValueListenableBuilder<bool>(
+              valueListenable: Perf.dynamicIsland,
+              builder: (_, on, __) => SwitchListTile(
+                secondary: const Icon(Icons.graphic_eq_rounded),
+                title: const Text('Dynamic Island'),
+                subtitle: const Text(
+                    'Tampilkan kontrol pemutar mengambang di dalam aplikasi'),
+                value: on,
+                onChanged: Perf.setDynamicIsland,
+              ),
+            ),
             const SizedBox(height: 8),
           ]),
         ),

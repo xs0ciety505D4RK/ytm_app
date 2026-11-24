@@ -10,8 +10,9 @@ import '../ui/nav.dart';
 import 'equalizer_sheet.dart';
 import 'queue_sheet.dart';
 
-String _fmt(Duration d) =>
-    '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+String _fmt(Duration d) => d.inHours > 0
+    ? '${d.inHours}:${(d.inMinutes % 60).toString().padLeft(2, '0')}:${(d.inSeconds % 60).toString().padLeft(2, '0')}'
+    : '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
 
 void showNowPlaying(BuildContext context) {
   showModalBottomSheet(
@@ -167,7 +168,10 @@ class _NowPlayingState extends State<NowPlaying> {
                   stream: p.player.positionStream,
                   builder: (context, snap) {
                     final pos = snap.data ?? Duration.zero;
-                    final dur = p.player.duration ?? Duration.zero;
+                    final liveDuration = p.player.duration;
+                    final dur = liveDuration != null && liveDuration > Duration.zero
+                        ? liveDuration
+                        : s.parsedDuration ?? Duration.zero;
                     final max = dur.inMilliseconds.toDouble();
                     return Column(children: [
                       Slider(
@@ -175,8 +179,10 @@ class _NowPlayingState extends State<NowPlaying> {
                             .toDouble()
                             .clamp(0, max > 0 ? max : 1),
                         max: max > 0 ? max : 1,
-                        onChanged: (v) =>
-                            p.player.seek(Duration(milliseconds: v.toInt())),
+                        onChanged: max > 0
+                            ? (v) => p.player
+                                .seek(Duration(milliseconds: v.toInt()))
+                            : null,
                       ),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),

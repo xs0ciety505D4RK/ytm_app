@@ -9,6 +9,18 @@ class Song {
   final String? artistId;
   final String? albumId;
 
+  Duration? get parsedDuration {
+    final parts = duration.split(':').map(int.tryParse).toList();
+    if (parts.isEmpty || parts.any((part) => part == null || part < 0)) {
+      return null;
+    }
+    var seconds = 0;
+    for (final part in parts) {
+      seconds = seconds * 60 + part!;
+    }
+    return seconds > 0 ? Duration(seconds: seconds) : null;
+  }
+
   const Song({
     required this.id,
     required this.title,
@@ -39,12 +51,12 @@ class Song {
         'albumId': albumId,
       };
 
-  Song copyWith({String? thumb, String? artist}) => Song(
+  Song copyWith({String? thumb, String? artist, String? duration}) => Song(
         id: id,
         title: title,
         artist: artist ?? this.artist,
         thumb: thumb ?? this.thumb,
-        duration: duration,
+        duration: duration ?? this.duration,
         artistId: artistId,
         albumId: albumId,
       );

@@ -18,12 +18,26 @@ import 'yt_stream_source.dart';
 
 enum RepeatKind { off, all, one }
 
+class _ResolveResult {
+  const _ResolveResult({
+    required this.kind,
+    this.uri,
+    this.streams,
+    this.error,
+  });
+
+  final String kind;
+  final Uri? uri;
+  final List<AudioOnlyStreamInfo>? streams;
+  final Object? error;
+}
+
 class PlayerService extends ChangeNotifier {
   PlayerService._();
   static final PlayerService i = PlayerService._();
   static const Duration _startupLimit = Duration(seconds: 18);
   static const Duration _manifestLimit = Duration(seconds: 6);
-  static const Duration _youtubePhaseLimit = Duration(seconds: 8);
+  static const Duration _youtubePhaseLimit = Duration(seconds: 5);
 
   final AndroidEqualizer eq = AndroidEqualizer();
   final AndroidLoudnessEnhancer loud = AndroidLoudnessEnhancer();
@@ -81,7 +95,7 @@ class PlayerService extends ChangeNotifier {
       config: const AudioServiceConfig(
         androidNotificationChannelId: 'com.glass.ytm_glass.audio',
         androidNotificationChannelName: 'Pemutar musik',
-        androidNotificationOngoing: false,
+        androidNotificationOngoing: true,
         androidStopForegroundOnPause: false,
       ),
     );
@@ -118,8 +132,28 @@ class PlayerService extends ChangeNotifier {
         title: s.title,
         artist: s.artist,
         artUri: s.thumb.isEmpty ? null : Uri.parse(s.thumb),
-        duration: d,
+        duration: d ?? s.parsedDuration,
       );
+
+  Future<void> _refreshDuration(Song song, int req) async {
+    if (song.parsedDuration != null) return;
+    try {
+      final video = await _yt.videos.get(song.id).timeout(
+            const Duration(seconds: 5),
+          );
+      final duration = video.duration;
+      if (duration == null || req != _req || current?.id != song.id) return;
+      final formatted = duration.inHours > 0
+          ? '${duration.inHours}:${(duration.inMinutes % 60).toString().padLeft(2, '0')}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}'
+          : '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
+      final updated = song.copyWith(duration: formatted);
+      queue[index] = updated;
+      _handler.mediaItem.add(_item(updated, duration));
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[PlayerService] metadata duration gagal: ${_short(e)}');
+    }
+  }
 
   // ---------- stream YouTube ----------
 
@@ -329,85 +363,107 @@ class PlayerService extends ChangeNotifier {
       } else {
         Object? last;
         var opened = false;
-        try {
-          _setLoadingStage(req, 'Meminta stream dari API YouTube...');
-          final stream = await YoutubeServiceApi.streamUri(song.id)
-              .timeout(_stageTimeout(
-            started,
-            const Duration(seconds: 3),
-            limit: _youtubePhaseLimit,
-          ));
-          if (req != _req) return;
-          if (stream != null) {
-            await _prepareAndStart(
-              AudioSource.uri(stream),
-              req: req,
-              started: started,
-              label: 'API YouTube baru',
-              limit: _youtubePhaseLimit,
-            );
-            opened = true;
-          } else {
-            last = Exception('API YouTube tidak mengirim URL stream');
-          }
-        } catch (e) {
-          last = e;
-          debugPrint('[PlayerService] API YouTube baru gagal: ${_short(e)}');
-        }
+        _setLoadingStage(req, 'Mencari sumber audio tercepat...');
+        final pending = <String, Future<_ResolveResult>>{
+          'api': () async {
+            try {
+              final uri = await YoutubeServiceApi.streamUri(song.id).timeout(
+                _stageTimeout(started, const Duration(seconds: 3)),
+              );
+              return _ResolveResult(
+                kind: 'api',
+                uri: uri,
+                error: uri == null
+                    ? Exception('API tidak mengirim URL stream')
+                    : null,
+              );
+            } catch (e) {
+              return _ResolveResult(kind: 'api', error: e);
+            }
+          }(),
+          'youtube': () async {
+            try {
+              final streams = await _streams(
+                song.id,
+                onStage: (stage) => _setLoadingStage(req, stage),
+                startup: started,
+              );
+              return _ResolveResult(kind: 'youtube', streams: streams);
+            } catch (e) {
+              return _ResolveResult(kind: 'youtube', error: e);
+            }
+          }(),
+        };
 
-        try {
-          if (!opened && req == _req &&
-              started.elapsed < _startupLimit) {
-            final list = await _streams(
-              song.id,
-              onStage: (stage) => _setLoadingStage(req, stage),
-              startup: started,
-            );
-            if (req != _req) return;
-            // Keep youtube_explode as a bounded fallback if the new service
-            // times out or returns a URL that ExoPlayer cannot open.
-            for (final info in list.take(2)) {
-              final sources = <MapEntry<String, AudioSource>>[
-                MapEntry('langsung', AudioSource.uri(info.url)),
-                MapEntry('cadangan', YtStreamSource(_yt, info)),
-                if (kBackend.isNotEmpty)
-                  MapEntry('relay', AudioSource.uri(_audioProxyUri(info.url))),
-              ];
-              for (final candidate in sources) {
-                if (req != _req) return;
-                if (started.elapsed >= _startupLimit) break;
-                try {
-                  await _prepareAndStart(
-                    candidate.value,
-                    req: req,
-                    started: started,
-                    label: candidate.key,
-                  );
-                  opened = true;
-                  break;
-                } catch (e) {
-                  last = e;
-                  debugPrint(
-                    '[PlayerService] ${candidate.key} gagal; '
-                    'itag=${info.tag} ${info.container.name}/${info.audioCodec}: ${_short(e)}',
-                  );
-                  if (req != _req) return;
-                  if (started.elapsed < _startupLimit) {
-                    try {
-                      await _player.stop().timeout(const Duration(seconds: 1));
-                    } catch (_) {}
-                  }
+        while (pending.isNotEmpty && !opened && req == _req &&
+            started.elapsed < _startupLimit) {
+          final result = await Future.any(pending.values).timeout(
+            _stageTimeout(started, const Duration(seconds: 7)),
+          );
+          pending.remove(result.kind);
+          if (result.error != null) {
+            last = result.error;
+            debugPrint(
+                '[PlayerService] resolver ${result.kind} gagal: ${_short(result.error!)}');
+            continue;
+          }
+
+          if (result.uri != null) {
+            try {
+              await _prepareAndStart(
+                AudioSource.uri(result.uri!),
+                req: req,
+                started: started,
+                label: 'API YouTube baru',
+                limit: _youtubePhaseLimit,
+              );
+              opened = true;
+            } catch (e) {
+              last = e;
+              debugPrint('[PlayerService] API YouTube baru gagal: ${_short(e)}');
+            }
+            continue;
+          }
+
+          for (final info in (result.streams ?? const <AudioOnlyStreamInfo>[])
+              .take(2)) {
+            final sources = <MapEntry<String, AudioSource>>[
+              MapEntry('langsung', AudioSource.uri(info.url)),
+              MapEntry('cadangan', YtStreamSource(_yt, info)),
+              if (kBackend.isNotEmpty)
+                MapEntry('relay', AudioSource.uri(_audioProxyUri(info.url))),
+            ];
+            for (final candidate in sources) {
+              if (req != _req || started.elapsed >= _startupLimit) break;
+              try {
+                await _prepareAndStart(
+                  candidate.value,
+                  req: req,
+                  started: started,
+                  label: candidate.key,
+                );
+                opened = true;
+                break;
+              } catch (e) {
+                last = e;
+                debugPrint(
+                  '[PlayerService] ${candidate.key} gagal; '
+                  'itag=${info.tag} ${info.container.name}/${info.audioCodec}: ${_short(e)}',
+                );
+                if (req == _req && started.elapsed < _startupLimit) {
+                  try {
+                    await _player.stop().timeout(const Duration(seconds: 1));
+                  } catch (_) {}
                 }
               }
-              if (opened) break;
-              if (started.elapsed >= _startupLimit) break;
             }
+            if (opened || started.elapsed >= _startupLimit) break;
           }
-        } catch (e) {
-          last = e;
-          debugPrint('[PlayerService] YouTube fallback gagal: ${_short(e)}');
         }
         if (!opened) throw last ?? Exception('Semua sumber audio gagal dibuka');
+      }
+      if (req == _req && current?.parsedDuration == null) {
+        unawaited(_refreshDuration(song, req));
       }
     } catch (e) {
       if (req == _req) {

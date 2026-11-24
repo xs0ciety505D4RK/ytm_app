@@ -7,6 +7,7 @@ import 'screens/library_screen.dart';
 import 'screens/search_screen.dart';
 import 'services/player_service.dart';
 import 'ui/bubble_nav.dart';
+import 'ui/dynamic_island.dart';
 import 'ui/glass.dart';
 import 'ui/mini_player.dart';
 
@@ -20,7 +21,9 @@ Future<void> main() async {
   await Perf.load();
   await PlayerService.i.init(); // foreground service + notifikasi media
   runApp(const App());
-  Permission.notification.request(); // Android 13+: izin notifikasi pemutar
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    await Permission.notification.request(); // Android 13+: notifikasi pemutar
+  });
 }
 
 class App extends StatelessWidget {
@@ -107,6 +110,7 @@ class _ShellState extends State<Shell> {
             ]),
           ),
         ),
+        const DynamicIsland(),
       ]),
     );
   }

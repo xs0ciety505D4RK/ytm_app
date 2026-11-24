@@ -5,12 +5,15 @@ import 'package:just_audio/just_audio.dart';
 /// Tombol next/prev di notifikasi diteruskan ke PlayerService.
 class MusicHandler extends BaseAudioHandler with SeekHandler {
   MusicHandler(this.player, {required this.onNext, required this.onPrev}) {
-    player.playbackEventStream.listen((_) => playbackState.add(_state()));
+    player.playbackEventStream.listen((_) => _publishState());
+    player.playerStateStream.listen((_) => _publishState());
   }
 
   final AudioPlayer player;
   final Future<void> Function() onNext;
   final Future<void> Function() onPrev;
+
+  void _publishState() => playbackState.add(_state());
 
   PlaybackState _state() => PlaybackState(
         controls: [
