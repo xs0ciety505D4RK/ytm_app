@@ -13,6 +13,7 @@ class LyricLine {
 }
 
 class Lyrics {
+  static const cacheVersion = 2;
   final List<LyricLine> lines; // kosong kalau tidak ada versi sinkron
   final String plain;
   const Lyrics(this.lines, this.plain);
@@ -23,6 +24,7 @@ class Lyrics {
       synced ? lines.map((e) => e.text).toList() : plain.split('\n');
 
   Map<String, dynamic> toJson() => {
+        'version': cacheVersion,
         'plain': plain,
         'lines': [
           for (final l in lines) {'t': l.t.inMilliseconds, 'x': l.text}
@@ -64,7 +66,11 @@ class LyricsApi {
     try {
       final f = await _file('lyr_${s.id}.json');
       if (await f.exists()) {
-        return Lyrics.fromJson(jsonDecode(await f.readAsString()));
+        final decoded = jsonDecode(await f.readAsString());
+        if (decoded is Map && decoded['version'] == Lyrics.cacheVersion) {
+          return Lyrics.fromJson(Map<String, dynamic>.from(decoded));
+        }
+        await f.delete();
       }
     } catch (_) {}
     final l = await _fetchNet(s);
@@ -117,14 +123,34 @@ class LyricsApi {
   }
 
   static List<LyricLine> _parse(String lrc) {
-    final re = RegExp(r'^\[(\d+):(\d+(?:\.\d+)?)\](.*)$');
+    final timestamp = RegExp(r'\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]');
+    final offsetMatch = RegExp(r'\[offset:([+-]?\d+)\]',
+            caseSensitive: false)
+        .firstMatch(lrc);
+    final offset = int.tryParse(offsetMatch?.group(1) ?? '') ?? 0;
     final out = <LyricLine>[];
     for (final line in lrc.split('\n')) {
-      final m = re.firstMatch(line.trim());
-      if (m == null) continue;
-      final ms = (int.parse(m[1]!) * 60 + double.parse(m[2]!)) * 1000;
-      out.add(LyricLine(Duration(milliseconds: ms.round()), m[3]!.trim()));
+      final matches = timestamp.allMatches(line.trim()).toList();
+      if (matches.isEmpty) continue;
+      final text = line.trim().substring(matches.last.end).trim();
+      for (final match in matches) {
+        final minutes = int.tryParse(match.group(1) ?? '') ?? 0;
+        final seconds = int.tryParse(match.group(2) ?? '') ?? 0;
+        if (seconds > 59) continue;
+        final fraction = match.group(3) ?? '';
+        final milliseconds = fraction.isEmpty
+            ? 0
+            : int.tryParse(fraction.padRight(3, '0').substring(0, 3)) ?? 0;
+        final time = Duration(
+          milliseconds:
+              ((minutes * 60 + seconds) * 1000 + milliseconds + offset)
+                  .clamp(0, 1 << 62)
+                  .toInt(),
+        );
+        out.add(LyricLine(time, text));
+      }
     }
+    out.sort((a, b) => a.t.compareTo(b.t));
     return out;
   }
 
@@ -135,7 +161,9 @@ class LyricsApi {
     final f = await _file('lyr_${s.id}_$lang.json');
     try {
       if (await f.exists()) {
-        return List<String>.from(jsonDecode(await f.readAsString()));
+        final cached = List<String>.from(jsonDecode(await f.readAsString()));
+        if (cached.length == l.texts.length) return cached;
+        await f.delete();
       }
     } catch (_) {}
 

@@ -13,7 +13,8 @@ if 'xmlns:tools' not in s:
 perms = ''.join(
     f'    <uses-permission android:name="android.permission.{p}"/>\n'
     for p in ['INTERNET', 'WAKE_LOCK', 'FOREGROUND_SERVICE',
-              'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'POST_NOTIFICATIONS']
+              'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'FOREGROUND_SERVICE_SPECIAL_USE',
+              'SYSTEM_ALERT_WINDOW', 'POST_NOTIFICATIONS']
 )
 s = s.replace('<application', perms + '    <application', 1)
 
@@ -30,6 +31,12 @@ svc = '''        <service android:name="com.ryanheise.audioservice.AudioService"
                 <action android:name="android.intent.action.MEDIA_BUTTON"/>
             </intent-filter>
         </receiver>
+        <service android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Displays the user's optional interactive music controls overlay."/>
+        </service>
 '''
 s = s.replace('</application>', svc + '    </application>', 1)
 s = s.replace('android:label="ytm_glass"', 'android:label="YTM Glass"')

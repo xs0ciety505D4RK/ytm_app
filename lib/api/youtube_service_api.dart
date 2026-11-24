@@ -27,7 +27,7 @@ class YoutubeServiceApi {
 
   static Future<String?> lyrics(String videoId) async {
     final response = await _get(
-      '/api/lyrics',
+      '/api/Lyrics',
       {'videoId': videoId},
       timeout: _lyricsTimeout,
     );

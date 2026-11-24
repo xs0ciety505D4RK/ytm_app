@@ -4,12 +4,19 @@ import 'package:just_audio/just_audio.dart';
 /// Jembatan ke notifikasi & lock screen (foreground service Android).
 /// Tombol next/prev di notifikasi diteruskan ke PlayerService.
 class MusicHandler extends BaseAudioHandler with SeekHandler {
-  MusicHandler(this.player, {required this.onNext, required this.onPrev}) {
+  MusicHandler(this.player,
+      {required this.onPlay,
+      required this.onPause,
+      required this.onNext,
+      required this.onPrev}) {
     player.playbackEventStream.listen((_) => _publishState());
     player.playerStateStream.listen((_) => _publishState());
+    player.positionStream.listen((_) => _publishState());
   }
 
   final AudioPlayer player;
+  final Future<void> Function() onPlay;
+  final Future<void> Function() onPause;
   final Future<void> Function() onNext;
   final Future<void> Function() onPrev;
 
@@ -38,9 +45,9 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
       );
 
   @override
-  Future<void> play() => player.play();
+  Future<void> play() => onPlay();
   @override
-  Future<void> pause() => player.pause();
+  Future<void> pause() => onPause();
   @override
   Future<void> seek(Duration position) => player.seek(position);
   @override

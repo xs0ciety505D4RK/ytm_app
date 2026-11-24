@@ -22,7 +22,8 @@ class Perf {
 
   static Future<void> setDynamicIsland(bool v) async {
     dynamicIsland.value = v;
-    (await SharedPreferences.getInstance()).setBool('dynamic_island', v);
+    await (await SharedPreferences.getInstance())
+        .setBool('dynamic_island', v);
   }
 }
 

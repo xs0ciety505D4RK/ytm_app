@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -73,6 +74,9 @@ class PlayerService extends ChangeNotifier {
   List<Song> downloaded = [];
   Map<String, String> downloadPaths = {};
   final Map<String, double> progress = {};
+  final Map<String, String> downloadStage = {};
+  final Map<String, String> downloadErrors = {};
+  final Map<String, http.Client> _downloadClients = {};
   // Untuk membatalkan unduhan
   final Map<String, bool> _cancelDownload = {};
 
@@ -89,6 +93,8 @@ class PlayerService extends ChangeNotifier {
     _handler = await AudioService.init(
       builder: () => MusicHandler(
         _player,
+        onPlay: play,
+        onPause: pause,
         onNext: () => next(),
         onPrev: () => prev(),
       ),
@@ -489,17 +495,26 @@ class PlayerService extends ChangeNotifier {
     await _playIndex(i);
   }
 
-  Future<void> toggle() async {
+  Future<void> play() async {
     if (error != null && current != null) {
       await _playIndex(index); // coba lagi
       return;
     }
-    if (_player.playing) {
-      await _player.pause();
-    } else {
-      await _player.play();
-    }
+    await _player.play();
     notifyListeners();
+  }
+
+  Future<void> pause() async {
+    await _player.pause();
+    notifyListeners();
+  }
+
+  Future<void> toggle() async {
+    if (_player.playing) {
+      await pause();
+    } else {
+      await play();
+    }
   }
 
   Future<void> next({bool auto = false}) async {
@@ -645,82 +660,184 @@ class PlayerService extends ChangeNotifier {
   /// Batalkan unduhan yang sedang berjalan.
   void cancelDownload(String id) {
     _cancelDownload[id] = true;
+    downloadStage[id] = 'Membatalkan unduhan…';
+    _downloadClients.remove(id)?.close();
+    notifyListeners();
   }
 
-  /// Unduh audio + lirik supaya bisa dipakai tanpa internet.
-  /// - Progress disimpan di [progress]
-  /// - Error ditangani dengan bersih (file sementara dihapus)
-  /// - Bisa dibatalkan via [cancelDownload]
+  void _setDownloadStage(String id, String stage) {
+    if (!_cancelDownload.containsKey(id) || _cancelDownload[id] == true) {
+      return;
+    }
+    downloadStage[id] = stage;
+    notifyListeners();
+  }
+
+  Future<int> _writeDownloadStream(
+    String id,
+    Stream<List<int>> stream,
+    int total,
+    File partial,
+  ) async {
+    final sink = partial.openWrite();
+    var received = 0;
+    var shownProgress = 0.0;
+    var shownBytes = 0;
+    try {
+      await for (final chunk in stream.timeout(const Duration(seconds: 25))) {
+        if (_cancelDownload[id] == true) break;
+        sink.add(chunk);
+        received += chunk.length;
+        if (total > 0) {
+          final value = (received / total).clamp(0.0, 1.0);
+          if (value - shownProgress >= 0.02 || value >= 1) {
+            shownProgress = value;
+            progress[id] = value;
+            notifyListeners();
+          }
+        } else if (received - shownBytes >= 256 * 1024) {
+          shownBytes = received;
+          downloadStage[id] =
+              'Mengunduh ${(received / (1024 * 1024)).toStringAsFixed(1)} MB…';
+          notifyListeners();
+        }
+      }
+    } finally {
+      await sink.flush();
+      await sink.close();
+    }
+    return received;
+  }
+
+  Future<int> _downloadHttp(Uri uri, String id, File partial) async {
+    final client = http.Client();
+    _downloadClients[id] = client;
+    try {
+      final request = http.Request('GET', uri)
+        ..headers['Accept'] = 'audio/mpeg, audio/*;q=0.9, */*;q=0.8';
+      final response = await client
+          .send(request)
+          .timeout(const Duration(seconds: 25));
+      if (response.statusCode != 200 && response.statusCode != 206) {
+        throw HttpException('Server stream membalas ${response.statusCode}');
+      }
+      return await _writeDownloadStream(
+        id,
+        response.stream,
+        response.contentLength ?? 0,
+        partial,
+      );
+    } finally {
+      if (identical(_downloadClients[id], client)) {
+        _downloadClients.remove(id);
+      }
+      client.close();
+    }
+  }
+
+  /// Download dengan API stream cepat, lalu fallback ke stream YouTube lama.
+  /// File sementara hanya dipromosikan setelah transfer lengkap diverifikasi.
   Future<void> download(Song s) async {
     if (isDownloaded(s) || progress.containsKey(s.id)) return;
     progress[s.id] = 0;
+    downloadErrors.remove(s.id);
+    downloadStage[s.id] = 'Mencari sumber audio…';
     _cancelDownload.remove(s.id);
     notifyListeners();
 
-    File? tempFile;
+    File? partial;
+    File? completedFile;
+    Object? lastError;
     try {
-      final list = await _streams(s.id);
-      final a = list.first;
       final dir = await getApplicationDocumentsDirectory();
-      tempFile = File('${dir.path}/dl_${s.id}.${a.container.name}');
-
-      // Hapus file lama jika ada (dari download gagal sebelumnya)
-      if (tempFile.existsSync()) await tempFile.delete();
-
-      final sink = tempFile.openWrite();
-      final total = a.size.totalBytes;
-      var got = 0;
-      var lastShown = 0.0;
-      var failed = false;
-
+      Uri? apiUri;
       try {
-        await for (final chunk in _yt.videos.streamsClient.get(a)) {
-          // Cek pembatalan
-          if (_cancelDownload[s.id] == true) {
-            failed = true;
+        apiUri = await YoutubeServiceApi.streamUri(s.id)
+            .timeout(const Duration(seconds: 3));
+      } catch (e) {
+        lastError = e;
+      }
+      if (_cancelDownload[s.id] == true) return;
+
+      if (apiUri != null) {
+        partial = File('${dir.path}/dl_${s.id}.mp3.part');
+        try {
+          if (await partial.exists()) await partial.delete();
+          _setDownloadStage(s.id, 'Mengunduh audio…');
+          final bytes = await _downloadHttp(apiUri, s.id, partial);
+          if (_cancelDownload[s.id] == true) return;
+          if (bytes <= 1024) throw const FormatException('Audio kosong');
+          completedFile = File('${dir.path}/dl_${s.id}.mp3');
+        } catch (e) {
+          lastError = e;
+          if (await partial.exists()) await partial.delete();
+          partial = null;
+        }
+      }
+
+      if (completedFile == null) {
+        _setDownloadStage(s.id, 'Mencari stream YouTube…');
+        final streams = await _streams(
+          s.id,
+          onStage: (stage) => _setDownloadStage(s.id, stage),
+        );
+        for (final info in streams) {
+          if (_cancelDownload[s.id] == true) return;
+          final ext = RegExp(r'^[a-z0-9]{2,5}$')
+                  .hasMatch(info.container.name.toLowerCase())
+              ? info.container.name.toLowerCase()
+              : 'audio';
+          partial = File('${dir.path}/dl_${s.id}.$ext.part');
+          try {
+            if (await partial.exists()) await partial.delete();
+            _setDownloadStage(s.id, 'Mengunduh audio YouTube…');
+            final bytes = await _writeDownloadStream(
+              s.id,
+              _yt.videos.streamsClient.get(info),
+              info.size.totalBytes,
+              partial,
+            );
+            if (_cancelDownload[s.id] == true) return;
+            if (bytes <= 1024) throw const FormatException('Audio kosong');
+            completedFile = File('${dir.path}/dl_${s.id}.$ext');
             break;
-          }
-          sink.add(chunk);
-          got += chunk.length;
-          final pr = total > 0 ? got / total : 0.0;
-          if (pr - lastShown > 0.03) {
-            lastShown = pr;
-            progress[s.id] = pr;
-            notifyListeners();
+          } catch (e) {
+            lastError = e;
+            if (await partial.exists()) await partial.delete();
+            partial = null;
           }
         }
-      } finally {
-        await sink.flush();
-        await sink.close();
       }
 
-      if (failed || (_cancelDownload[s.id] == true)) {
-        // Hapus file tidak lengkap
-        if (tempFile.existsSync()) await tempFile.delete();
-      } else {
-        // Verifikasi file tidak kosong
-        if (tempFile.existsSync() && tempFile.lengthSync() > 1024) {
-          downloadPaths[s.id] = tempFile.path;
-          downloaded.insert(0, s);
-          await _save();
-          // Lirik ikut tersimpan (gagal pun tidak masalah)
-          unawaited(LyricsApi.prefetch(s));
-        } else {
-          if (tempFile.existsSync()) await tempFile.delete();
-        }
+      if (_cancelDownload[s.id] == true) return;
+      if (completedFile == null || partial == null) {
+        throw lastError ?? Exception('Semua sumber unduhan gagal');
       }
+      _setDownloadStage(s.id, 'Menyimpan unduhan…');
+      if (await completedFile.exists()) await completedFile.delete();
+      await partial.rename(completedFile.path);
+      downloadPaths[s.id] = completedFile.path;
+      downloaded.removeWhere((song) => song.id == s.id);
+      downloaded.insert(0, s);
+      progress[s.id] = 1;
+      await _save();
+      unawaited(LyricsApi.prefetch(s));
     } catch (e) {
-      // Bersihkan file sementara jika error
+      if (_cancelDownload[s.id] != true) {
+        downloadErrors[s.id] = _short(e);
+        debugPrint('[PlayerService] download ${s.id} gagal: ${_short(e)}');
+      }
+    } finally {
+      _downloadClients.remove(s.id)?.close();
       try {
-        if (tempFile != null && tempFile.existsSync()) {
-          await tempFile.delete();
-        }
+        if (partial != null && await partial.exists()) await partial.delete();
       } catch (_) {}
+      if (_cancelDownload[s.id] == true) downloadErrors.remove(s.id);
+      progress.remove(s.id);
+      downloadStage.remove(s.id);
+      _cancelDownload.remove(s.id);
+      notifyListeners();
     }
-
-    progress.remove(s.id);
-    _cancelDownload.remove(s.id);
-    notifyListeners();
   }
 
   Future<void> deleteDownload(Song s) async {

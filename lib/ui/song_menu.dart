@@ -95,20 +95,25 @@ Future<void> showSongMenu(BuildContext context, Song s,
         builder: (_, __) {
           final isDownloading = p.progress.containsKey(s.id);
           final isDownloaded = p.isDownloaded(s);
-          final pct = isDownloading
-              ? ' (${(p.progress[s.id]! * 100).round()}%)'
-              : '';
+          final downloadError = p.downloadErrors[s.id];
+          final stage = p.downloadStage[s.id];
+          final progressText = stage ??
+              '${((p.progress[s.id] ?? 0) * 100).round()}%';
           return _row(
             isDownloaded
                 ? Icons.download_done_rounded
                 : isDownloading
                     ? Icons.downloading_rounded
-                    : Icons.download_rounded,
+                    : downloadError != null
+                        ? Icons.error_outline_rounded
+                        : Icons.download_rounded,
             isDownloaded
                 ? 'Hapus unduhan'
                 : isDownloading
-                    ? 'Batalkan unduhan$pct'
-                    : 'Unduh untuk offline',
+                    ? 'Batalkan · $progressText'
+                    : downloadError != null
+                        ? 'Gagal mengunduh · ketuk untuk coba lagi'
+                        : 'Unduh untuk offline',
             () {
               if (isDownloaded) {
                 Navigator.pop(ctx);
@@ -118,7 +123,6 @@ Future<void> showSongMenu(BuildContext context, Song s,
                 p.cancelDownload(s.id);
                 _toast(context, 'Unduhan dibatalkan');
               } else {
-                Navigator.pop(ctx);
                 p.download(s);
                 _toast(context, 'Mulai mengunduh…');
               }

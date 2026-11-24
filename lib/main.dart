@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'screens/explore_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
 import 'screens/search_screen.dart';
+import 'services/dynamic_island_service.dart';
+import 'services/permission_service.dart';
 import 'services/player_service.dart';
 import 'ui/bubble_nav.dart';
 import 'ui/dynamic_island.dart';
 import 'ui/glass.dart';
 import 'ui/mini_player.dart';
+
+@pragma('vm:entry-point')
+void overlayMain() {
+  runApp(const IslandOverlayApp());
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,9 +26,12 @@ Future<void> main() async {
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   await Perf.load();
   await PlayerService.i.init(); // foreground service + notifikasi media
+  await DynamicIslandService.instance.init();
   runApp(const App());
   WidgetsBinding.instance.addPostFrameCallback((_) async {
-    await Permission.notification.request(); // Android 13+: notifikasi pemutar
+    if (!await PermissionService.refreshNotifications()) {
+      await PermissionService.requestNotifications();
+    }
   });
 }
 
@@ -110,7 +119,6 @@ class _ShellState extends State<Shell> {
             ]),
           ),
         ),
-        const DynamicIsland(),
       ]),
     );
   }
