@@ -1,4 +1,4 @@
-# YTM Glass backend untuk Vercel
+# SoundXs backend untuk Vercel
 
 Backend ini mempertahankan `/api/yt` untuk API katalog YouTube Music dan menambahkan `/api/audio` sebagai relai byte-range untuk URL stream HTTPS dari host `*.googlevideo.com`. Endpoint audio meneruskan permintaan `Range`/`If-Range`, membatasi redirect ke host yang sama-sama diizinkan, dan tidak menerima URL arbitrary.
 

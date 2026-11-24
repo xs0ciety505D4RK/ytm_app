@@ -14,6 +14,7 @@ import 'ui/mini_player.dart';
 
 @pragma('vm:entry-point')
 void overlayMain() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const IslandOverlayApp());
 }
 
@@ -41,7 +42,7 @@ class App extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'YTM Glass',
+      title: 'SoundXs',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,

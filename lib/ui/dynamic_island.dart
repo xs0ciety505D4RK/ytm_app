@@ -48,7 +48,7 @@ class _IslandOverlayState extends State<_IslandOverlay> {
   void _receive(dynamic event) {
     try {
       final decoded = event is String ? jsonDecode(event) : event;
-      if (decoded is Map) {
+      if (decoded is Map && !decoded.containsKey('action')) {
         setState(() => _state = Map<String, dynamic>.from(decoded));
       }
     } catch (_) {}
@@ -61,7 +61,7 @@ class _IslandOverlayState extends State<_IslandOverlay> {
   @override
   Widget build(BuildContext context) {
     final thumb = _state['thumb']?.toString() ?? '';
-    final title = _state['title']?.toString() ?? 'YTM Glass';
+    final title = _state['title']?.toString() ?? 'SoundXs';
     final artist = _state['loading'] == true
         ? 'Menyambungkan audio…'
         : (_state['artist']?.toString() ?? 'Pemutar musik');

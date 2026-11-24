@@ -12,6 +12,7 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
     player.playbackEventStream.listen((_) => _publishState());
     player.playerStateStream.listen((_) => _publishState());
     player.positionStream.listen((_) => _publishState());
+    _publishState();
   }
 
   final AudioPlayer player;
@@ -21,6 +22,8 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
   final Future<void> Function() onPrev;
 
   void _publishState() => playbackState.add(_state());
+
+  void publishCurrentState() => _publishState();
 
   PlaybackState _state() => PlaybackState(
         controls: [

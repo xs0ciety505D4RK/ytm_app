@@ -49,7 +49,7 @@ class _SettingsContentState extends State<_SettingsContent>
     final notification = await PermissionService.refreshNotifications();
     final overlay = await DynamicIslandService.instance.permissionGranted();
     if (!overlay && Perf.dynamicIsland.value) {
-      await Perf.setDynamicIsland(false);
+      await DynamicIslandService.instance.setEnabled(false);
     }
     if (!mounted) return;
     setState(() {
@@ -63,7 +63,8 @@ class _SettingsContentState extends State<_SettingsContent>
     if (_busy) return;
     setState(() => _busy = true);
     if (enabled) {
-      await PermissionService.requestNotifications();
+      final granted = await PermissionService.requestNotifications();
+      if (!granted) await PermissionService.openSystemSettings();
     } else {
       await PermissionService.openSystemSettings();
     }
@@ -80,7 +81,7 @@ class _SettingsContentState extends State<_SettingsContent>
     setState(() => _busy = false);
     if (enabled && !accepted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Izinkan YTM Glass tampil di atas aplikasi lain untuk memakai Dynamic Island.'),
+        content: Text('Izin overlay belum diberikan atau Dynamic Island gagal dijalankan.'),
         behavior: SnackBarBehavior.floating,
       ));
     }
@@ -133,7 +134,9 @@ class _SettingsContentState extends State<_SettingsContent>
                   subtitle: Text(_checking
                       ? 'Memeriksa izin overlay…'
                       : _overlayGranted
-                          ? 'Island interaktif mengambang di atas aplikasi lain'
+                          ? on
+                              ? 'Mengambang aktif — putar lagu untuk kontrol'
+                              : 'Izin siap — aktifkan untuk menampilkan island'
                           : 'Perlu izin “Tampil di atas aplikasi lain”'),
                   value: on,
                   onChanged: _checking || _busy ? null : _islandChanged,

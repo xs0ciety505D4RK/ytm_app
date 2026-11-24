@@ -99,10 +99,12 @@ class PlayerService extends ChangeNotifier {
         onPrev: () => prev(),
       ),
       config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.glass.ytm_glass.audio',
-        androidNotificationChannelName: 'Pemutar musik',
+        androidNotificationChannelId: 'com.glass.ytm_glass.media.v2',
+        androidNotificationChannelName: 'SoundXs · Pemutar musik',
+        androidNotificationChannelDescription:
+            'Notifikasi dan kontrol pemutaran SoundXs',
         androidNotificationOngoing: true,
-        androidStopForegroundOnPause: true,
+        androidStopForegroundOnPause: false,
       ),
     );
     _player.playerStateStream.listen((s) {
@@ -354,6 +356,7 @@ class PlayerService extends ChangeNotifier {
     _proxyRecoveryReq = -1;
     art.value = song.thumb;
     _handler.mediaItem.add(_item(song));
+    _handler.publishCurrentState();
     _pushHistory(song);
     notifyListeners();
     final started = Stopwatch()..start();

@@ -1,5 +1,4 @@
-"""Patch hasil `flutter create` supaya pemutaran di background jalan
-(foreground service audio_service + izin) dan app bernama YTM Glass."""
+"""Patch Android untuk foreground playback, overlay, dan label aplikasi SoundXs."""
 import glob
 import pathlib
 import re
@@ -39,7 +38,7 @@ svc = '''        <service android:name="com.ryanheise.audioservice.AudioService"
         </service>
 '''
 s = s.replace('</application>', svc + '    </application>', 1)
-s = s.replace('android:label="ytm_glass"', 'android:label="YTM Glass"')
+s = s.replace('android:label="ytm_glass"', 'android:label="SoundXs"')
 s = s.replace('<application', '<application android:usesCleartextTraffic="true"', 1)
 m.write_text(s)
 
