@@ -103,7 +103,7 @@ class PlayerService extends ChangeNotifier {
         androidNotificationChannelName: 'SoundXs · Pemutar musik',
         androidNotificationChannelDescription:
             'Notifikasi dan kontrol pemutaran SoundXs',
-        androidNotificationOngoing: true,
+        androidNotificationOngoing: false,
         androidStopForegroundOnPause: false,
       ),
     );
