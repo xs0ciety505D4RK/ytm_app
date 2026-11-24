@@ -21,13 +21,17 @@ class YoutubeServiceApi {
     );
     final items = _listData(response);
     return items
-        .map(_entryFromMap)
+        .map((item) => item is Map ? _entryFromMap(item) : null)
         .whereType<Entry>()
         .toList(growable: false);
   }
 
   static Future<List<Section>> home() async {
-    final response = await _get('/api/home', const {});
+    final response = await _get(
+      '/api/home',
+      const {},
+      timeout: _searchTimeout,
+    );
     final data = response['data'];
     final rawSections = data is Map ? data['sections'] : null;
     if (rawSections is! List) return const [];
@@ -43,7 +47,7 @@ class YoutubeServiceApi {
       if (title.isEmpty || rawItems is! List) continue;
       final entries = rawItems
           .whereType<Map>()
-          .map(_entryFromMap)
+          .map((item) => _entryFromMap(item))
           .whereType<Entry>()
           .toList(growable: false);
       if (entries.isNotEmpty) sections.add(Section(title, entries));
