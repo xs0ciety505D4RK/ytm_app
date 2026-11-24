@@ -96,7 +96,7 @@ class PlayerService extends ChangeNotifier {
         androidNotificationChannelId: 'com.glass.ytm_glass.audio',
         androidNotificationChannelName: 'Pemutar musik',
         androidNotificationOngoing: true,
-        androidStopForegroundOnPause: false,
+        androidStopForegroundOnPause: true,
       ),
     );
     _player.playerStateStream.listen((s) {
