@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/song.dart';
+import 'youtube_service_api.dart';
 
 class LyricLine {
   final Duration t;
@@ -77,6 +78,17 @@ class LyricsApi {
   }
 
   static Future<Lyrics?> _fetchNet(Song s) async {
+    try {
+      final rawLyrics = await YoutubeServiceApi.lyrics(s.id);
+      if (rawLyrics != null) {
+        final lines = _parse(rawLyrics);
+        final plain = lines.isEmpty
+            ? rawLyrics
+            : lines.map((line) => line.text).join('\n');
+        return Lyrics(lines, plain);
+      }
+    } catch (_) {}
+
     final title = s.title.replaceAll(RegExp(r'\(.*?\)|\[.*?\]'), '').trim();
     for (final params in [
       {'track_name': title, 'artist_name': s.artist},
@@ -133,7 +145,8 @@ class LyricsApi {
     while (i < src.length) {
       var j = i;
       var len = 0;
-      while (j < src.length && len + src[j].length < 3500) {
+      // Keep URL-encoded API requests comfortably below common URL limits.
+      while (j < src.length && len + src[j].length < 500) {
         len += src[j].length + 1;
         j++;
       }
@@ -170,6 +183,20 @@ class LyricsApi {
 
   static Future<List<String>?> _translateChunk(
       List<String> lines, String lang) async {
+    try {
+      final translated = await YoutubeServiceApi.translate(
+        lines.join('\n'),
+        lang,
+      );
+      if (translated != null) {
+        final parts = translated.split('\n');
+        if (parts.length == lines.length) {
+          return parts.map((e) => e.trim()).toList();
+        }
+        if (lines.length == 1) return [translated.trim()];
+      }
+    } catch (_) {}
+
     final all = await _raw(lines.join('\n'), lang);
     if (all == null) return null;
     final parts = all.split('\n');

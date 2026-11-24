@@ -10,8 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart'
     show YoutubeExplode, YoutubeApiClient, AudioOnlyStreamInfo;
 import '../api/lyrics_api.dart';
-import '../api/soundcloud_api.dart';
 import '../api/ytmusic_api.dart';
+import '../api/youtube_service_api.dart';
 import '../models/song.dart';
 import 'music_handler.dart';
 import 'yt_stream_source.dart';
@@ -23,7 +23,7 @@ class PlayerService extends ChangeNotifier {
   static final PlayerService i = PlayerService._();
   static const Duration _startupLimit = Duration(seconds: 18);
   static const Duration _manifestLimit = Duration(seconds: 6);
-  static const Duration _youtubePhaseLimit = Duration(seconds: 12);
+  static const Duration _youtubePhaseLimit = Duration(seconds: 8);
 
   final AndroidEqualizer eq = AndroidEqualizer();
   final AndroidLoudnessEnhancer loud = AndroidLoudnessEnhancer();
@@ -330,83 +330,82 @@ class PlayerService extends ChangeNotifier {
         Object? last;
         var opened = false;
         try {
-          final list = await _streams(
-            song.id,
-            onStage: (stage) => _setLoadingStage(req, stage),
-            startup: started,
-          );
+          _setLoadingStage(req, 'Meminta stream dari API YouTube...');
+          final stream = await YoutubeServiceApi.streamUri(song.id)
+              .timeout(_stageTimeout(
+            started,
+            const Duration(seconds: 3),
+            limit: _youtubePhaseLimit,
+          ));
           if (req != _req) return;
-          // Do not rely on one high-bitrate format: it may be unsupported by a
-          // device or rejected upstream. Try compatible alternatives, but
-          // reserve the final six seconds for the SoundCloud fallback.
-          for (final info in list.take(2)) {
-            final sources = <MapEntry<String, AudioSource>>[
-              MapEntry('langsung', AudioSource.uri(info.url)),
-              MapEntry('cadangan', YtStreamSource(_yt, info)),
-              if (kBackend.isNotEmpty)
-                MapEntry('relay', AudioSource.uri(_audioProxyUri(info.url))),
-            ];
-            for (final candidate in sources) {
-              if (req != _req) return;
-              if (started.elapsed >= _youtubePhaseLimit) break;
-              try {
-                await _prepareAndStart(
-                  candidate.value,
-                  req: req,
-                  started: started,
-                  label: candidate.key,
-                  limit: _youtubePhaseLimit,
-                );
-                opened = true;
-                break;
-              } catch (e) {
-                last = e;
-                debugPrint(
-                  '[PlayerService] ${candidate.key} gagal; '
-                  'itag=${info.tag} ${info.container.name}/${info.audioCodec}: ${_short(e)}',
-                );
-                if (req != _req) return;
-                if (started.elapsed < _youtubePhaseLimit) {
-                  try {
-                    await _player.stop().timeout(const Duration(seconds: 1));
-                  } catch (_) {}
-                }
-              }
-            }
-            if (opened) break;
-            if (started.elapsed >= _youtubePhaseLimit) break;
+          if (stream != null) {
+            await _prepareAndStart(
+              AudioSource.uri(stream),
+              req: req,
+              started: started,
+              label: 'API YouTube baru',
+              limit: _youtubePhaseLimit,
+            );
+            opened = true;
+          } else {
+            last = Exception('API YouTube tidak mengirim URL stream');
           }
         } catch (e) {
           last = e;
-          debugPrint('[PlayerService] YouTube playback gagal: ${_short(e)}');
+          debugPrint('[PlayerService] API YouTube baru gagal: ${_short(e)}');
         }
 
-        if (!opened && req == _req && started.elapsed < _startupLimit) {
-          try {
-            _setLoadingStage(req, 'Mencari versi yang cocok di SoundCloud...');
-            final stream = await SoundCloudApi.findStreamFor(song)
-                .timeout(_stageTimeout(started, const Duration(seconds: 5)));
+        try {
+          if (!opened && req == _req &&
+              started.elapsed < _startupLimit) {
+            final list = await _streams(
+              song.id,
+              onStage: (stage) => _setLoadingStage(req, stage),
+              startup: started,
+            );
             if (req != _req) return;
-            if (stream == null) {
-              final youtubeError =
-                  last == null ? 'YouTube tidak menyediakan stream' : _short(last);
-              last = Exception(
-                '$youtubeError; versi cocok tidak ditemukan di SoundCloud',
-              );
-            } else {
-              await _prepareAndStart(
-                AudioSource.uri(stream),
-                req: req,
-                started: started,
-                label: 'SoundCloud fallback',
-              );
-              opened = true;
+            // Keep youtube_explode as a bounded fallback if the new service
+            // times out or returns a URL that ExoPlayer cannot open.
+            for (final info in list.take(2)) {
+              final sources = <MapEntry<String, AudioSource>>[
+                MapEntry('langsung', AudioSource.uri(info.url)),
+                MapEntry('cadangan', YtStreamSource(_yt, info)),
+                if (kBackend.isNotEmpty)
+                  MapEntry('relay', AudioSource.uri(_audioProxyUri(info.url))),
+              ];
+              for (final candidate in sources) {
+                if (req != _req) return;
+                if (started.elapsed >= _startupLimit) break;
+                try {
+                  await _prepareAndStart(
+                    candidate.value,
+                    req: req,
+                    started: started,
+                    label: candidate.key,
+                  );
+                  opened = true;
+                  break;
+                } catch (e) {
+                  last = e;
+                  debugPrint(
+                    '[PlayerService] ${candidate.key} gagal; '
+                    'itag=${info.tag} ${info.container.name}/${info.audioCodec}: ${_short(e)}',
+                  );
+                  if (req != _req) return;
+                  if (started.elapsed < _startupLimit) {
+                    try {
+                      await _player.stop().timeout(const Duration(seconds: 1));
+                    } catch (_) {}
+                  }
+                }
+              }
+              if (opened) break;
+              if (started.elapsed >= _startupLimit) break;
             }
-          } catch (e) {
-            final youtubeError =
-                last == null ? 'YouTube tidak menyediakan stream' : _short(last);
-            last = Exception('$youtubeError; SoundCloud: ${_short(e)}');
           }
+        } catch (e) {
+          last = e;
+          debugPrint('[PlayerService] YouTube fallback gagal: ${_short(e)}');
         }
         if (!opened) throw last ?? Exception('Semua sumber audio gagal dibuka');
       }

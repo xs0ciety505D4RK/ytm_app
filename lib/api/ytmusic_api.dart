@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/song.dart';
+import 'youtube_service_api.dart';
 
 /// Opsional: URL backend Vercel. Isi lewat
 /// --dart-define=BACKEND_URL=https://nama-lo.vercel.app
@@ -35,6 +36,11 @@ class YtMusicApi {
   // ================= public =================
 
   static Future<List<Section>> home() async {
+    try {
+      final sections = await YoutubeServiceApi.home();
+      if (sections.isNotEmpty) return sections;
+    } catch (_) {}
+
     final j = await _post('browse', {'browseId': 'FEmusic_home'});
     final s = parseSections(j);
     if (s.isNotEmpty) return s;
@@ -43,6 +49,13 @@ class YtMusicApi {
 
   static Future<List<Entry>> search(String q,
       {SearchKind kind = SearchKind.songs}) async {
+    if (kind == SearchKind.songs) {
+      try {
+        final entries = await YoutubeServiceApi.searchSongs(q);
+        if (entries.isNotEmpty) return _dedupe(entries);
+      } catch (_) {}
+    }
+
     final j = await _post('search', {'query': q, 'params': _filters[kind]});
     return _dedupe(_collect(j, 'musicResponsiveListItemRenderer')
         .map(_entryFromListItem)
